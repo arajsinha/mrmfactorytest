@@ -20,7 +20,7 @@ COPY . .
 # Build all plugins (adaptors) from their source code.
 RUN mkdir -p /app/plugins
 RUN (cd adaptors/cfplugin && go build -buildmode=plugin -o /app/plugins/cfplugin.so .)
-RUN (cd adaptors/dns-adaptor && go build -buildmode=plugin -o /app/plugins/dns-adaptor.so .)
+RUN (cd adaptors/dns-adaptor-route53 && go build -buildmode=plugin -o /app/plugins/dns-adaptor-route53.so .)
 RUN (cd adaptors/hana-adaptor && go build -buildmode=plugin -o /app/plugins/hana-adaptor.so .)
 
 # Build the main application into a single, static binary.
