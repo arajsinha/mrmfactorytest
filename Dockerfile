@@ -1,8 +1,11 @@
 # --- Stage 1: The Builder ---
 FROM golang:1.24-alpine AS builder
 
-# Install git, which is needed for 'go mod download'.
-RUN apk --no-cache add git
+# --- THIS IS THE FIX ---
+# Install git (for go mod) AND build-base (for the C toolchain needed by plugins).
+# The 'build-base' package includes gcc, make, and other tools required for cgo.
+RUN apk --no-cache add git build-base
+# --- END OF FIX ---
 
 # Set the working directory inside the container.
 WORKDIR /app
@@ -14,14 +17,11 @@ RUN go mod download
 # Copy the rest of the application source code.
 COPY . .
 
-# --- THIS IS THE FIX ---
 # Build all plugins (adaptors) from their source code.
-# The correct way to build plugins is to 'cd' into their directory first.
 RUN mkdir -p /app/plugins
 RUN (cd adaptors/cfplugin && go build -buildmode=plugin -o /app/plugins/cfplugin.so .)
 RUN (cd adaptors/dns-adaptor && go build -buildmode=plugin -o /app/plugins/dns-adaptor.so .)
 RUN (cd adaptors/hana-adaptor && go build -buildmode=plugin -o /app/plugins/hana-adaptor.so .)
-# --- END OF FIX ---
 
 # Build the main application into a single, static binary.
 RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o /app/mrm-cell .
