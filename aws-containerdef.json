@@ -1,0 +1,64 @@
+[
+    {
+        "name": "mrm",
+        "image": "$IMAGE",
+        "essential": true,
+        "portMappings": [
+            {
+                "containerPort": 2379
+            },
+            {
+                "containerPort": 2380
+            },
+            {
+                "containerPort": 8080
+            }
+        ],
+        "logConfiguration": {
+            "logDriver": "awslogs",
+            "options": {
+                "awslogs-create-group": "true",
+                "awslogs-group": "/ecs/${TASK_FAMILY}_${node}",
+                "awslogs-region": "$REGION",
+                "awslogs-stream-prefix": "mrm"
+            }
+        },
+        "environment": [
+            {
+                "name": "node-id",
+                "value": "$node"
+            },
+            {
+                "name": "host-id",
+                "value": "$FQDN"
+            },
+            {
+                "name": "initial-cluster",
+                "value": "$initial_cluster"
+            },
+            {
+                "name": "cluster-state",
+                "value": "new"
+            },
+            {
+                "name": "etcd-discovery-url",
+                "value": "$ETCD_DISCOVERY_URL"
+            }
+        ],
+        "command": [
+            "/root/startup.sh",
+            "--node-id",
+            "$node",
+            "--host-id",
+            "$FQDN",
+            "--initial-cluster",
+            "$initial_cluster",
+            "--cluster-state",
+            "new",
+            "--etcd-discovery-url",
+            "$ETCD_DISCOVERY_URL",
+            "--cloud-provider",
+            "aws"
+        ]
+    }
+]

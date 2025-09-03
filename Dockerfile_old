@@ -1,0 +1,61 @@
+# === Builder Stage ===
+ARG BUILDPLATFORM
+ARG TARGETPLATFORM
+ARG TARGETOS
+ARG TARGETARCH
+
+# BuildKit automatically uses $BUILDPLATFORM for the FROM platform selection
+FROM golang:1.24.1-bookworm AS builder
+
+# Install file command for debugging, BEFORE other steps that might be cached
+RUN apt-get update && apt-get install -y --no-install-recommends file && rm -rf /var/lib/apt/lists/*
+
+ENV CGO_ENABLED=1
+WORKDIR /app
+
+COPY go.mod go.sum ./
+RUN go mod download
+
+COPY . .
+
+# for debugging
+RUN \
+    echo "==== BUILDER DEBUG START ====" && \
+    echo "BUILDPLATFORM=${BUILDPLATFORM}" && \
+    echo "TARGETPLATFORM=${TARGETPLATFORM}" && \
+    echo "TARGETOS=${TARGETOS}" && \
+    echo "TARGETARCH=${TARGETARCH}" && \
+    echo "--- Running uname -m ---" && uname -m && \
+    echo "--- Running go env ---" && go env && \
+    echo "==== BUILDER DEBUG END ====" && \
+    \
+    echo ">>> Starting actual build... <<<" && \
+    mkdir -p ./plugins && \
+    go build -v -o ./plugins/cfplugin.so -buildmode=plugin ./cfplugin/main.go && \
+    go build -v -o ./plugins/dns-adaptor-route53.so -buildmode=plugin ./dns-adaptor-route53/main.go && \
+    go build -v -o ./plugins/hana-adaptor.so -buildmode=plugin ./hana-adaptor/main.go && \
+    go build -v -ldflags="-s -w" -o mrm20 . && \
+    \
+    echo "==== AFTER BUILD DEBUG START ====" && \
+    echo "--- Running file ./mrm20 ---" && file ./mrm20 && \
+    echo "==== AFTER BUILD DEBUG END ===="
+
+# === Final Stage ===
+ARG TARGETPLATFORM
+
+# BuildKit automatically uses $TARGETPLATFORM for the FROM platform selection
+FROM debian:bookworm-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    libc6 \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /root/
+
+COPY --from=builder /app/mrm20 .
+COPY --from=builder /app/fsm-config.yaml .
+COPY --from=builder /app/plugins ./plugins/
+COPY --from=builder /app/startup.sh .
+
+RUN chmod +x startup.sh

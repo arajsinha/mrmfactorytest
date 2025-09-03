@@ -1,0 +1,47 @@
+name: Build and Publish Docker Image
+
+# This workflow runs automatically on every push to the 'main' branch.
+on:
+  push:
+    branches: [ "main" ]
+
+jobs:
+  build-and-push:
+    # Use the latest version of Ubuntu for the runner environment.
+    runs-on: ubuntu-latest
+    
+    # These permissions are required for the workflow to read the repository
+    # and write the final image to the GitHub Packages container registry.
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      # Step 1: Check out your repository's code
+      # This downloads your source code onto the GitHub Runner.
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # Step 2: Log in to the GitHub Container Registry (GHCR)
+      # This step authenticates the runner so it has permission to push the image.
+      # It uses a secure, automatically generated GITHUB_TOKEN.
+      - name: Log in to the Container registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }} # Your GitHub username
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Step 3: Build the Docker image and push it to the registry
+      # This is the main step. It finds your Dockerfile at the root, builds it,
+      # and pushes the final image to GHCR.
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          # The 'context: .' tells Docker to use the repository root, which is now correct.
+          context: .
+          # The 'push: true' flag tells the action to upload the image after building.
+          push: true
+          # The 'tags' field defines the name and tag for your image.
+          # For example: ghcr.io/arajsinha/mrm_cell_factory_test:latest
+          tags: ghcr.io/${{ github.repository }}:latest

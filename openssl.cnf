@@ -1,0 +1,21 @@
+# openssl.cnf
+[req]
+distinguished_name = req_distinguished_name
+req_extensions = v3_req
+prompt = no
+
+[req_distinguished_name]
+C = DE
+ST = Walldorf
+L = Walldorf
+O = SAP
+OU = MRM
+CN = mrm-ca
+
+[v3_req]
+subjectAltName = @alt_names
+
+[alt_names]
+DNS.1 = localhost
+DNS.2 = node1.your.domain
+IP.1 = 127.0.0.1 

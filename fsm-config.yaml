@@ -1,0 +1,344 @@
+fsm:
+  definition:
+    states:
+      - RegionAActive
+      - RegionBActive
+      - SwitchingToB
+      - SwitchingToA
+      - ErrorState
+      - TestingEfficiency
+      - TestingAdvancedDeps
+    triggers:
+      external:
+        - RegionAFailed
+        - RegionARecovered
+        - ManualSwitchToB
+        - ManualSwitchToA
+        - StartEfficiencyTest
+        - StartAdvancedTest
+      internal:
+        - SwitchComplete
+        - SwitchFailed
+  behavior:
+    transitions:
+      - trigger: RegionAFailed
+        changes:
+          - { currentState: RegionAActive, nextState: SwitchingToB }
+      - trigger: RegionARecovered
+        changes:
+          - { currentState: RegionBActive, nextState: SwitchingToA }
+      - trigger: SwitchComplete
+        changes:
+          - { currentState: SwitchingToB, nextState: RegionBActive }
+          - { currentState: SwitchingToA, nextState: RegionAActive }
+      - trigger: SwitchFailed
+        changes:
+          - { currentState: SwitchingToB, nextState: ErrorState }
+          - { currentState: SwitchingToA, nextState: ErrorState }
+      - trigger: ManualSwitchToB
+        changes:
+          - { currentState: RegionAActive, nextState: SwitchingToB }
+      - trigger: ManualSwitchToA
+        changes:
+          - { currentState: RegionBActive, nextState: SwitchingToA }
+      - trigger: StartEfficiencyTest
+        changes:
+          - { currentState: RegionAActive, nextState: TestingEfficiency }
+      - trigger: StartAdvancedTest
+        changes:
+          - { currentState: RegionAActive, nextState: TestingAdvancedDeps }
+    actions:
+      - state: RegionAActive
+        tasks: []
+      - state: RegionBActive
+        tasks: []
+      - state: ErrorState
+        tasks: []
+
+      - state: SwitchingToB
+        tasks:
+          - id: dns_cname_b_switch
+            package: plugins/dns-adaptor-route53.so
+            method: Execute
+            outputVariable: dnsCnameBResult
+            context:
+              accessKey:    { "baoPath": "secret/data/scenarios/{{.ScenarioID}}/aws/route53", "key": "accessKey" }
+              secretKey:    { "baoPath": "secret/data/scenarios/{{.ScenarioID}}/aws/route53", "key": "secretKey" }
+              region:       { "baoPath": "secret/data/scenarios/{{.ScenarioID}}/aws/route53", "key": "region" }
+              hostedZoneID: { "baoPath": "secret/data/scenarios/{{.ScenarioID}}/aws/route53", "key": "hostedZoneID" }
+              recordName: "capha.aws.saptfe-demo.com."
+              recordType: "CNAME"
+              targetValue: "https://ci-eu20-ha-harmonized-rag-app-approuter.cfapps.eu20-001.hana.ondemand.com"
+              ttl: 60
+
+          - id: dns_a_b_switch
+            package: plugins/dns-adaptor-route53.so
+            method: Execute
+            dependencies: { tasks: [dns_cname_b_switch] }
+            outputVariable: dnsABResult
+            context:
+              accessKey:    { "baoPath": "secret/data/scenarios/{{.ScenarioID}}/aws/route53", "key": "accessKey" }
+              secretKey:    { "baoPath": "secret/data/scenarios/{{.ScenarioID}}/aws/route53", "key": "secretKey" }
+              region:       { "baoPath": "secret/data/scenarios/{{.ScenarioID}}/aws/route53", "key": "region" }
+              hostedZoneID: { "baoPath": "secret/data/scenarios/{{.ScenarioID}}/aws/route53", "key": "hostedZoneID" }
+              recordName: "api.aws.saptfe-demo.com."
+              recordType: "A"
+              targetValue: "192.0.2.45"
+              ttl: 60
+
+          - id: dns_srv_b_switch
+            package: plugins/dns-adaptor-route53.so
+            method: Execute
+            dependencies: { tasks: [dns_a_b_switch] }
+            outputVariable: dnsSrvBResult
+            context:
+              accessKey:    { "baoPath": "secret/data/scenarios/{{.ScenarioID}}/aws/route53", "key": "accessKey" }
+              secretKey:    { "baoPath": "secret/data/scenarios/{{.ScenarioID}}/aws/route53", "key": "secretKey" }
+              region:       { "baoPath": "secret/data/scenarios/{{.ScenarioID}}/aws/route53", "key": "region" }
+              hostedZoneID: { "baoPath": "secret/data/scenarios/{{.ScenarioID}}/aws/route53", "key": "hostedZoneID" }
+              recordName: "_sip._tcp.caprag.aws.saptfe-demo.com."
+              recordType: "SRV"
+              priority: 10
+              weight: 5
+              port: 5060
+              target: "sipserver.secondary-region.example.com."
+              ttl: 60
+
+          - id: stop_approuter_primary_for_b_switch
+            package: plugins/cfplugin.so
+            method: Execute
+            outputVariable: stopAppRouterPrimaryResultB
+            context:
+              action: "stop"
+              cfAPI: "https://api.cf.eu10-004.hana.ondemand.com"
+              appGUID: "e4da98d3-d2d1-4bd4-b837-ed43e46b27dc"
+              username: { "baoPath": "secret/data/scenarios/{{.ScenarioID}}/cf/primary", "key": "username" }
+              password: { "baoPath": "secret/data/scenarios/{{.ScenarioID}}/cf/primary", "key": "password" }
+              origin:   { "baoPath": "secret/data/scenarios/{{.ScenarioID}}/cf/primary", "key": "origin" }
+              
+          - id: stop_srv_primary_for_b_switch
+            package: plugins/cfplugin.so
+            method: Execute
+            outputVariable: stopSrvPrimaryResultB
+            context:
+              action: "stop"
+              cfAPI: "https://api.cf.eu10-004.hana.ondemand.com"
+              appGUID: "22eebcc1-0e01-49e8-9457-792391104949"
+              username: { "baoPath": "secret/data/scenarios/{{.ScenarioID}}/cf/primary", "key": "username" }
+              password: { "baoPath": "secret/data/scenarios/{{.ScenarioID}}/cf/primary", "key": "password" }
+              origin:   { "baoPath": "secret/data/scenarios/{{.ScenarioID}}/cf/primary", "key": "origin" }
+
+          - id: delete_remote_subs_secondary_switch
+            package: plugins/hana-adaptor.so
+            method: Execute
+            dependencies: { tasks: [stop_srv_primary_for_b_switch, stop_approuter_primary_for_b_switch] }
+            outputVariable: deleteSubsResultB
+            context:
+              action: "deleteRemoteSubscriptions"
+              credentials: { "baoPath": "secret/data/scenarios/{{.ScenarioID}}/hana/secondary" }
+              remoteSource: "RS_CAPRAG"
+              targetSchema: "858E8272F0B2422195E519423DE650CD"
+
+          - id: start_srv_secondary_switch
+            package: plugins/cfplugin.so
+            method: Execute
+            dependencies: { tasks: [delete_remote_subs_secondary_switch] }
+            outputVariable: startSrvSecondaryResult
+            context:
+              action: "start"
+              cfAPI: "https://api.cf.eu20-001.hana.ondemand.com"
+              appGUID: "a96e610d-b2b4-4dd2-b950-839d1aaca839"
+              username: { "baoPath": "secret/data/scenarios/{{.ScenarioID}}/cf/secondary", "key": "username" }
+              password: { "baoPath": "secret/data/scenarios/{{.ScenarioID}}/cf/secondary", "key": "password" }
+              origin:   { "baoPath": "secret/data/scenarios/{{.ScenarioID}}/cf/secondary", "key": "origin" }
+
+          - id: start_approuter_secondary_switch
+            package: plugins/cfplugin.so
+            method: Execute
+            dependencies: { tasks: [start_srv_secondary_switch] }
+            outputVariable: startAppRouterSecondaryResult
+            context:
+              action: "start"
+              cfAPI: "https://api.cf.eu20-001.hana.ondemand.com"
+              appGUID: "5b8cd1d0-7de7-475f-92b5-ffa0194a7cab"
+              username: { "baoPath": "secret/data/scenarios/{{.ScenarioID}}/cf/secondary", "key": "username" }
+              password: { "baoPath": "secret/data/scenarios/{{.ScenarioID}}/cf/secondary", "key": "password" }
+              origin:   { "baoPath": "secret/data/scenarios/{{.ScenarioID}}/cf/secondary", "key": "origin" }
+
+      - state: SwitchingToA
+        tasks:
+          - id: dns_cname_a_switch
+            package: plugins/dns-adaptor-route53.so
+            method: Execute
+            outputVariable: dnsCnameAResult
+            context:
+              accessKey:    { "baoPath": "secret/data/scenarios/{{.ScenarioID}}/aws/route53", "key": "accessKey" }
+              secretKey:    { "baoPath": "secret/data/scenarios/{{.ScenarioID}}/aws/route53", "key": "secretKey" }
+              region:       { "baoPath": "secret/data/scenarios/{{.ScenarioID}}/aws/route53", "key": "region" }
+              hostedZoneID: { "baoPath": "secret/data/scenarios/{{.ScenarioID}}/aws/route53", "key": "hostedZoneID" }
+              recordName: "capha.aws.saptfe-demo.com."
+              recordType: "CNAME"
+              targetValue: "https://tfe-india-genai-dev-harmonized-rag-app-approuter.cfapps.eu10-004.hana.ondemand.com"
+              ttl: 60
+
+          - id: stop_approuter_secondary_for_a_switch
+            package: plugins/cfplugin.so
+            method: Execute
+            outputVariable: stopAppRouterSecResultA
+            context:
+              action: "stop"
+              cfAPI: "https://api.cf.eu20-001.hana.ondemand.com"
+              appGUID: "5b8cd1d0-7de7-475f-92b5-ffa0194a7cab"
+              username: { "baoPath": "secret/data/scenarios/{{.ScenarioID}}/cf/secondary", "key": "username" }
+              password: { "baoPath": "secret/data/scenarios/{{.ScenarioID}}/cf/secondary", "key": "password" }
+              origin:   { "baoPath": "secret/data/scenarios/{{.ScenarioID}}/cf/secondary", "key": "origin" }
+
+          - id: stop_srv_secondary_for_a_switch
+            package: plugins/cfplugin.so
+            method: Execute
+            outputVariable: stopSrvSecResultA
+            context:
+              action: "stop"
+              cfAPI: "https://api.cf.eu20-001.hana.ondemand.com"
+              appGUID: "a96e610d-b2b4-4dd2-b950-839d1aaca839"
+              username: { "baoPath": "secret/data/scenarios/{{.ScenarioID}}/cf/secondary", "key": "username" }
+              password: { "baoPath": "secret/data/scenarios/{{.ScenarioID}}/cf/secondary", "key": "password" }
+              origin:   { "baoPath": "secret/data/scenarios/{{.ScenarioID}}/cf/secondary", "key": "origin" }
+
+          - id: create_subs_primary_switch
+            package: plugins/hana-adaptor.so
+            method: Execute
+            dependencies: { tasks: [stop_approuter_secondary_for_a_switch, stop_srv_secondary_for_a_switch] }
+            outputVariable: createSubsPrimaryResult
+            context:
+              action: "createRemoteSubscriptions"
+              credentials: { "baoPath": "secret/data/scenarios/{{.ScenarioID}}/hana/primary" }
+              remoteSource: "RS_CAPRAG"
+              targetSchema: "2DC652E3F0B04D1B960694179CA391D1"
+
+          - id: delete_subs_primary_verify_switch
+            package: plugins/hana-adaptor.so
+            method: Execute
+            dependencies: { tasks: [create_subs_primary_switch] }
+            outputVariable: deleteSubsPrimaryVerifyResult
+            context:
+              action: "deleteRemoteSubscriptions"
+              credentials: { "baoPath": "secret/data/scenarios/{{.ScenarioID}}/hana/primary" }
+              remoteSource: "RS_CAPRAG"
+              targetSchema: "2DC652E3F0B04D1B960694179CA391D1"
+
+          - id: recreate_subs_secondary_for_replication_switch
+            package: plugins/hana-adaptor.so
+            method: Execute
+            dependencies: { tasks: [delete_subs_primary_verify_switch] }
+            outputVariable: recreateSubsSecondaryResult
+            context:
+              action: "createRemoteSubscriptions"
+              credentials: { "baoPath": "secret/data/scenarios/{{.ScenarioID}}/hana/secondary" }
+              remoteSource: "RS_CAPRAG"
+              targetSchema: "858E8272F0B2422195E519423DE650CD"
+
+          - id: start_srv_primary_switch
+            package: plugins/cfplugin.so
+            method: Execute
+            dependencies: { tasks: [recreate_subs_secondary_for_replication_switch] }
+            outputVariable: startSrvPrimaryResult
+            context:
+              action: "start"
+              cfAPI: "https://api.cf.eu10-004.hana.ondemand.com"
+              appGUID: "22eebcc1-0e01-49e8-9457-792391104949"
+              username: { "baoPath": "secret/data/scenarios/{{.ScenarioID}}/cf/primary", "key": "username" }
+              password: { "baoPath": "secret/data/scenarios/{{.ScenarioID}}/cf/primary", "key": "password" }
+              origin:   { "baoPath": "secret/data/scenarios/{{.ScenarioID}}/cf/primary", "key": "origin" }
+
+          - id: start_approuter_primary_switch
+            package: plugins/cfplugin.so
+            method: Execute
+            dependencies: { tasks: [start_srv_primary_switch] }
+            outputVariable: startApprouterPrimaryResult
+            context:
+              action: "start"
+              cfAPI: "https://api.cf.eu10-004.hana.ondemand.com"
+              appGUID: "e4da98d3-d2d1-4bd4-b837-ed43e46b27dc"
+              username: { "baoPath": "secret/data/scenarios/{{.ScenarioID}}/cf/primary", "key": "username" }
+              password: { "baoPath": "secret/data/scenarios/{{.ScenarioID}}/cf/primary", "key": "password" }
+              origin:   { "baoPath": "secret/data/scenarios/{{.ScenarioID}}/cf/primary", "key": "origin" }
+      
+      # --- Test States ---
+      - state: TestingEfficiency
+        tasks:
+          - id: task-A-long
+            package: plugins/sleeper.so
+            method: Execute
+            context: { duration: "8s" }
+          - id: task-B-short
+            package: plugins/sleeper.so
+            method: Execute
+            context: { duration: "2s" }
+          - id: task-C-medium
+            package: plugins/sleeper.so
+            method: Execute
+            context: { duration: "5s" }
+          - id: task-D-depends-A
+            package: plugins/sleeper.so
+            method: Execute
+            dependencies: { tasks: [task-A-long] }
+            context: { duration: "1s" }
+          - id: task-E-depends-B
+            package: plugins/sleeper.so
+            method: Execute
+            dependencies: { tasks: [task-B-short] }
+            context: { duration: "4s" }
+          - id: task-F-depends-C
+            package: plugins/sleeper.so
+            method: Execute
+            dependencies: { tasks: [task-C-medium] }
+            context: { duration: "3s" }
+
+      - state: TestingAdvancedDeps
+        tasks:
+          - id: task-A-success
+            package: plugins/sleeper.so
+            method: Execute
+            context: { duration: "2s" }
+          - id: task-B-fail
+            package: plugins/sleeper.so
+            method: Execute
+            context: { duration: "3s", should_fail: true }
+          - id: task-C-also-succeeds
+            package: plugins/sleeper.so
+            method: Execute
+            context: { duration: "1s" }
+          - id: task-D-and-logic
+            package: plugins/sleeper.so
+            method: Execute
+            dependencies: { tasks: [task-A-success, task-B-fail] }
+            context: { duration: "1s" }
+          - id: task-E-or-logic
+            package: plugins/sleeper.so
+            method: Execute
+            dependencies:
+              tasks: [task-A-success, task-B-fail]
+              expression: 'status("task-A-success") == "completed" || status("task-B-fail") == "completed"'
+            context: { duration: "1s" }
+          - id: task-F-not-logic
+            package: plugins/sleeper.so
+            method: Execute
+            dependencies:
+              tasks: [task-B-fail]
+              expression: 'status("task-B-fail") != "completed"'
+            context: { duration: "1s" }
+          - id: task-G-xor-logic
+            package: plugins/sleeper.so
+            method: Execute
+            dependencies:
+              tasks: [task-A-success, task-B-fail]
+              expression: '(status("task-A-success") == "completed" && status("task-B-fail") != "completed") || (status("task-A-success") != "completed" && status("task-B-fail") == "completed")'
+            context: { duration: "1s" }
+          - id: task-H-nor-logic
+            package: plugins/sleeper.so
+            method: Execute
+            dependencies:
+              tasks: [task-A-success, task-C-also-succeeds]
+              expression: 'status("task-A-success") != "completed" && status("task-C-also-succeeds") != "completed"'
+            context: { duration: "1s" }

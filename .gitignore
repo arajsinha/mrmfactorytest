@@ -1,0 +1,18 @@
+# Ignore etcd data directories
+data.etcd*
+da/
+
+# Ignore log files
+*.log
+
+# Ignore compiled Go plugins and binaries
+*.so
+mrm-cell
+
+# Ignore old/temporary shell scripts and docs if you don't need them
+README_OLD.md
+startup.sh
+run_deploy_*.sh
+
+# Ignore OS-specific files
+.DS_Store
