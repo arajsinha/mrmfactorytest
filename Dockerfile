@@ -1,6 +1,6 @@
 # --- Stage 1: The Builder ---
 # This stage uses a full Go development environment to compile everything.
-FROM golang:1.22-alpine AS builder
+FROM golang:1.23-alpine AS builder
 
 # Install git, which is needed for 'go mod download' with some dependencies.
 RUN apk --no-cache add git
