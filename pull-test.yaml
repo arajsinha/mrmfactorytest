@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: image-pull-test-pod
+spec:
+  # This tells the pod to use the secret we created.
+  imagePullSecrets:
+  - name: ghcr-creds
+  containers:
+  - name: test-container
+    # This must be the EXACT image path.
+    image: ghcr.io/arajsinha/mrm_tester_factory:latest
+    # This command does nothing, it just keeps the container alive.
+    command: ["sleep", "3600"]

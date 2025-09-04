@@ -1,0 +1,108 @@
+# This Service is for internal communication between the application nodes.
+# It's a "headless service" (clusterIP: None), which is a standard pattern for
+# StatefulSets. It creates stable DNS names for each pod (e.g., mrm-cell-0.mrm-cell-internal)
+# that the etcd cluster needs to discover and communicate with its peers.
+apiVersion: v1
+kind: Service
+metadata:
+  name: mrm-cell-internal
+spec:
+  clusterIP: None
+  selector:
+    app: mrm-cell
+  ports:
+    - name: peer
+      port: 2380
+      targetPort: 2380
+    - name: client
+      port: 2379
+      targetPort: 2379
+---
+# This Service exposes your application to the public internet.
+# 'type: LoadBalancer' tells your cloud platform (SAP BTP) to provision a
+# public IP address and a network load balancer that will route external
+# traffic to your running pods.
+apiVersion: v1
+kind: Service
+metadata:
+  name: mrm-cell-public
+spec:
+  type: LoadBalancer
+  selector:
+    app: mrm-cell
+  ports:
+    # You can expose multiple HTTP ports if needed. For now, we expose node1's port.
+    - name: http-node1
+      protocol: TCP
+      port: 9081 # The public port people will connect to.
+      targetPort: 9081 # The port the container is listening on.
+---
+# This is the main definition for your 3-node application cluster.
+# A 'StatefulSet' is used because your application is stateful (it runs an etcd database)
+# and requires stable network identities and persistent storage.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: mrm-cell
+spec:
+  # This links the StatefulSet to the headless service for DNS discovery.
+  serviceName: "mrm-cell-internal"
+  # This ensures you always have 3 running nodes for high availability.
+  replicas: 3
+  selector:
+    matchLabels:
+      app: mrm-cell
+  # This is the blueprint for each of the three pods.
+  template:
+    metadata:
+      labels:
+        app: mrm-cell
+    spec:
+      containers:
+        - name: mrm-cell-container
+          # IMPORTANT: Replace 'arajsinha' with your actual Docker Hub username.
+          # This tells Kyma where to download your application's image.
+          image: arajsinha/mrm-cell-factory:latest
+          ports:
+            - containerPort: 9081
+            - containerPort: 2379
+            - containerPort: 2380
+          # This tells Kubernetes to inject all key-value pairs from the
+          # 'mrm-cell-secrets' secret as environment variables into the container.
+          envFrom:
+            - secretRef:
+                name: mrm-cell-secrets
+          # This special environment variable gives the pod its own name (e.g., "mrm-cell-0"),
+          # which is used to construct the command-line flags below.
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+          # This is the command that will be run inside each container.
+          # It uses the POD_NAME to give each node a unique identity.
+          command:
+            - "./mrm-cell"
+            - "--node-id=$(POD_NAME)"
+            - "--host-id=$(POD_NAME).mrm-cell-internal"
+            - "--http-port=9081" # All pods listen on the same internal port. The LoadBalancer handles public routing.
+            - "--client-port=2379"
+            - "--peer-port=2380"
+            - "--data-dir=/data/etcd"
+            - "--initial-cluster=mrm-cell-0=http://mrm-cell-0.mrm-cell-internal:2380,mrm-cell-1=http://mrm-cell-1.mrm-cell-internal:2380,mrm-cell-2=http://mrm-cell-2.mrm-cell-internal:2380"
+          # This mounts the persistent storage volume into the container's filesystem.
+          volumeMounts:
+            - name: etcd-data
+              mountPath: /data
+  # This template defines the persistent storage for each node's data directory.
+  # When Kubernetes creates 'mrm-cell-0', it will also create a persistent disk
+  # named 'etcd-data-mrm-cell-0' and attach it. This ensures that if the pod
+  # restarts, its etcd data is not lost.
+  volumeClaimTemplates:
+    - metadata:
+        name: etcd-data
+      spec:
+        accessModes: ["ReadWriteOnce"] # The volume can be mounted by a single node.
+        resources:
+          requests:
+            storage: 1Gi # Request 1 Gigabyte of storage per node.
