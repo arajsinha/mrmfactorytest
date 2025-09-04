@@ -14,6 +14,14 @@ type AppServer interface {
 
 // SetupHandlers registers handlers that call methods on our long-lived server object.
 func SetupHandlers(server AppServer) {
+	// --- THIS IS THE FIX ---
+	// Add a simple health check endpoint.
+	// Kubernetes will call this to determine if the container is ready.
+	http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprintln(w, "OK")
+	})
+	// --- END OF FIX ---
 	http.HandleFunc("/executeFSM", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
