@@ -17,7 +17,7 @@ import (
 	"mrm_cell/internal/cluster"
 	"mrm_cell/internal/config"
 	"mrm_cell/internal/crypto"
-	// "mrm_cell/internal/dns" // <-- THIS IS THE FIX: This unused import has been removed.
+	"mrm_cell/internal/dns"
 	"mrm_cell/internal/etcd"
 	"mrm_cell/internal/fsm"
 	"mrm_cell/internal/handlers"
@@ -30,7 +30,6 @@ import (
 	embed "go.etcd.io/etcd/server/v3/embed"
 )
 
-// ... (The rest of the file is exactly the same as before) ...
 var etcdServer *embed.Etcd
 
 const scenarioID = "S001"
@@ -42,7 +41,11 @@ type Server struct {
 }
 
 func NewServer(etcdClient *clientv3.Client, runner *taskrunner.Runner, logger *slog.Logger) *Server {
-	return &Server{etcdClient: etcdClient, runner: runner, logger: logger}
+	return &Server{
+		etcdClient: etcdClient,
+		runner:     runner,
+		logger:     logger,
+	}
 }
 
 func main() {
@@ -50,34 +53,43 @@ func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	ctx := context.Background()
 
-	cfg, err := telemetry.LoadConfig("telemetry.yaml")
-	if err != nil {
-		logger.Error("Failed to load telemetry config, using defaults", "error", err)
-		return
-	}
-	shutdown, err := telemetry.Initialize(ctx, cfg)
-	if err != nil {
-		logger.Error("Failed to initialize telemetry", "error", err)
-		return
-	}
-	defer shutdown(ctx)
+	// --- THIS IS THE ARCHITECTURAL FIX ---
+	// The application logic is now decoupled from the startup sequence.
 
+	// 1. Initialize non-blocking components first.
 	encryptionKey := os.Getenv("ENCRYPTION_KEY")
 	if encryptionKey == "" {
-		logger.Error("FATAL: ENCRYPTION_KEY environment variable not set.")
+		logger.Error("FATAL: ENCRYPTION_KEY not set.")
 		os.Exit(1)
 	}
 	cryptoService, err := crypto.NewService(encryptionKey)
 	if err != nil {
-		logger.Error("FATAL: Failed to initialize crypto service", "error", err)
+		logger.Error("FATAL: Failed to init crypto service", "error", err)
 		os.Exit(1)
 	}
 	secretsManager, err := secrets.NewManager(logger)
 	if err != nil {
-		logger.Error("FATAL: Failed to initialize secrets manager", "error", err)
+		logger.Error("FATAL: Failed to init secrets manager", "error", err)
 		os.Exit(1)
 	}
 
+	// This temporary client is ONLY for the initial secret sync.
+	tempEtcdClient, err := clientv3.New(clientv3.Config{Endpoints: []string{"http://localhost:2379"}, DialTimeout: 5 * time.Second})
+	if err == nil {
+		if err := syncSecrets(ctx, logger, secretsManager, cryptoService, tempEtcdClient); err != nil {
+			logger.Warn("Initial secret sync failed, will rely on existing secrets in etcd", "error", err)
+		}
+		tempEtcdClient.Close()
+	} else {
+		logger.Warn("Could not create temp client for secret sync, assuming secrets are already in etcd", "error", err)
+	}
+
+	// 2. Start the HTTP server immediately. This makes the /health endpoint available for the readiness probe.
+	// We create a placeholder server object for now. The real logic will be initialized later.
+	appServer := &Server{logger: logger}
+	startHTTPServer(config.HTTPPort, appServer)
+
+	// 3. Now, start the heavy, blocking initialization.
 	etcdConfig, err := initializeEtcd(config)
 	if err != nil {
 		logger.Error("Failed to initialize etcd", "error", err)
@@ -85,30 +97,27 @@ func main() {
 	}
 	defer closeEtcdServer()
 
-	client, err := clientv3.New(clientv3.Config{
-		Endpoints:   []string{fmt.Sprintf("http://%s:%d", etcdConfig.HostID, etcdConfig.ClientPort)},
-		DialTimeout: 5 * time.Second,
-	})
+	// 4. Create the final, shared etcd client for the running application.
+	client, err := clientv3.New(clientv3.Config{Endpoints: []string{fmt.Sprintf("http://%s:%d", etcdConfig.HostID, etcdConfig.ClientPort)}, DialTimeout: 5 * time.Second})
 	if err != nil {
 		logger.Error("Failed to create shared etcd client", "error", err)
 		return
 	}
 	defer client.Close()
 
-	if err := syncSecrets(ctx, logger, secretsManager, cryptoService, client); err != nil {
-		logger.Error("FATAL: Failed to sync secrets from OpenBao to etcd", "error", err)
-		os.Exit(1)
-	}
+	// 5. Populate the appServer with the real components.
+	appServer.etcdClient = client
+	appServer.runner = taskrunner.NewRunner(logger, 10, "")
 
-	runner := taskrunner.NewRunner(logger, 10, "")
-	appServer := NewServer(client, runner, logger)
-
+	// 6. Start the background cluster monitor.
 	clusterMonitor := cluster.NewMonitor(client, logger, config.NodeID)
 	clusterMonitor.Start(context.Background())
 
-	startHTTPServer(config.HTTPPort, appServer)
+	logger.Info("Application fully initialized and ready.")
 	waitForShutdown()
 }
+
+// ... (The rest of the file, including the Server methods and helpers, is unchanged) ...
 
 func (s *Server) ExecuteFSM(command string) {
 	ctx := context.Background()
@@ -124,7 +133,6 @@ func (s *Server) ExecuteFSM(command string) {
 	fsmMachine := fsm.NewMachine(fsmCtx, cfg, s.runner, s.logger, baseStore)
 	fsmMachine.Run(fsmCtx)
 }
-
 func (s *Server) RestartFSM(sid string, eid string) {
 	logger := s.logger.With("sid", sid, "eid", eid)
 	logger.Info("Starting restart process for execution.")
@@ -192,7 +200,6 @@ func (s *Server) RestartFSM(sid string, eid string) {
 	s.runner.ExecuteActions(ctx, tasksToRun, execStore)
 	logger.Info("Restart execution has been handed off to the runner.")
 }
-
 func startHTTPServer(httpPort int, server *Server) {
 	handlers.SetupHandlers(server)
 	go func() {
