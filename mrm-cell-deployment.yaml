@@ -1,4 +1,3 @@
-# This Service is for internal communication between the application nodes.
 apiVersion: v1
 kind: Service
 metadata:
@@ -15,7 +14,6 @@ spec:
     port: 2379
     targetPort: 2379
 ---
-# This Service exposes your application to the public internet.
 apiVersion: v1
 kind: Service
 metadata:
@@ -30,7 +28,6 @@ spec:
     port: 9081
     targetPort: 9081
 ---
-# This is the main definition for your 3-node application cluster.
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
@@ -40,24 +37,36 @@ spec:
   replicas: 3
   selector:
     matchLabels:
-      app: mrm-cell # The selector is looking for 'app: mrm-cell'
-  # This is the blueprint for each of the three pods.
+      app: mrm-cell
   template:
     metadata:
       labels:
-        # --- THIS IS THE FIX ---
-        # The pod's label now correctly matches the selector above.
         app: mrm-cell
-        # --- END OF FIX ---
     spec:
       containers:
       - name: mrm-cell-container
-        # IMPORTANT: Replace 'arajsinha' with your actual Docker Hub username.
         image: arajsinha/mrm-cell-factory:latest
         ports:
         - containerPort: 9081
         - containerPort: 2379
         - containerPort: 2380
+        
+        # --- THIS IS THE FIX ---
+        # Add a readiness probe to check if the etcd server is healthy.
+        # The StatefulSet will wait for this check to succeed before starting the next pod.
+        readinessProbe:
+          httpGet:
+            # etcd has a built-in health check endpoint.
+            path: /health
+            port: 2379
+          # Wait 10 seconds before the first check to give the server time to start.
+          initialDelaySeconds: 10
+          # Check every 5 seconds.
+          periodSeconds: 5
+          # Give up after 3 failures.
+          failureThreshold: 3
+        # --- END OF FIX ---
+        
         envFrom:
         - secretRef:
             name: mrm-cell-secrets
