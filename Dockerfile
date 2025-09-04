@@ -44,6 +44,8 @@ COPY fsm-config.yaml .
 # Copy the entire directory of compiled plugins from the builder stage.
 COPY --from=builder /app/plugins/ ./plugins/
 
+COPY telemetry.yaml .
+
 # Expose the ports that the application will listen on for documentation.
 EXPOSE 9081 8082 8083 2379 2380 
 
