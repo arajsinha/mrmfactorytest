@@ -50,4 +50,6 @@ COPY telemetry.yaml .
 EXPOSE 9081 8082 8083 2379 2380 
 
 # The command that will be run when a container is started from this image.
-CMD ["./mrm-cell"]
+# CMD ["./mrm-cell"]
+
+CMD ["sleep", "3600"]

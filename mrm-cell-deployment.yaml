@@ -40,20 +40,20 @@ spec:
   replicas: 3
   selector:
     matchLabels:
-      app: mrm-cell
+      app: mrm-cell # The selector is looking for 'app: mrm-cell'
+  # This is the blueprint for each of the three pods.
   template:
     metadata:
       labels:
-        app: m-cell
+        # --- THIS IS THE FIX ---
+        # The pod's label now correctly matches the selector above.
+        app: mrm-cell
+        # --- END OF FIX ---
     spec:
-      # The imagePullSecrets block is no longer needed for a public Docker Hub repo.
       containers:
       - name: mrm-cell-container
-        # --- THIS IS THE FIX ---
-        # The image path now points to your Docker Hub repository.
         # IMPORTANT: Replace 'arajsinha' with your actual Docker Hub username.
         image: arajsinha/mrm-cell-factory:latest
-        # --- END OF FIX ---
         ports:
         - containerPort: 9081
         - containerPort: 2379
