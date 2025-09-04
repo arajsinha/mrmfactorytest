@@ -52,18 +52,16 @@ spec:
         - containerPort: 2380
         
         # --- THIS IS THE FIX ---
-        # Add a readiness probe to check if the etcd server is healthy.
-        # The StatefulSet will wait for this check to succeed before starting the next pod.
+        # The readiness probe now checks the application's main HTTP port,
+        # which becomes ready before the etcd cluster is fully formed.
+        # This breaks the startup deadlock.
         readinessProbe:
           httpGet:
-            # etcd has a built-in health check endpoint.
+            # We add a simple /health endpoint to our app's API.
             path: /health
-            port: 2379
-          # Wait 10 seconds before the first check to give the server time to start.
-          initialDelaySeconds: 10
-          # Check every 5 seconds.
-          periodSeconds: 5
-          # Give up after 3 failures.
+            port: 9081 # <-- CHANGED FROM 2379
+          initialDelaySeconds: 15 # Give it a bit more time to start
+          periodSeconds: 10
           failureThreshold: 3
         # --- END OF FIX ---
         
