@@ -42,6 +42,12 @@ spec:
     metadata:
       labels:
         app: mrm-cell
+      # --- THIS IS THE FIX ---
+      # This annotation tells the Istio sidecar to intelligently handle
+      # the Kubernetes readiness probe so it doesn't get blocked.
+      annotations:
+        sidecar.istio.io/rewriteAppHTTPProbers: "true"
+      # --- END OF FIX ---
     spec:
       containers:
       - name: mrm-cell-container
@@ -50,21 +56,13 @@ spec:
         - containerPort: 9081
         - containerPort: 2379
         - containerPort: 2380
-        
-        # --- THIS IS THE FIX ---
-        # The readiness probe now checks the application's main HTTP port,
-        # which becomes ready before the etcd cluster is fully formed.
-        # This breaks the startup deadlock.
         readinessProbe:
           httpGet:
-            # We add a simple /health endpoint to our app's API.
             path: /health
-            port: 9081 # <-- CHANGED FROM 2379
-          initialDelaySeconds: 15 # Give it a bit more time to start
+            port: 9081
+          initialDelaySeconds: 15
           periodSeconds: 10
           failureThreshold: 3
-        # --- END OF FIX ---
-        
         envFrom:
         - secretRef:
             name: mrm-cell-secrets
