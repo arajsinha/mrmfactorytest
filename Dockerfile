@@ -24,7 +24,8 @@ RUN (cd adaptors/dns-adaptor-route53 && go build -buildmode=plugin -o /app/plugi
 RUN (cd adaptors/hana-adaptor && go build -buildmode=plugin -o /app/plugins/hana-adaptor.so .)
 
 # Build the main application into a single, static binary.
-RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o /app/mrm-cell .
+# RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o /app/mrm-cell .
+RUN go build -a -installsuffix cgo -o /app/mrm-cell .
 
 
 # --- Stage 2: The Final Image ---
