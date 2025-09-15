@@ -28,7 +28,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o /app/mrm-cell .
 
 
 # --- Stage 2: The Final Image ---
-FROM alpine:latest
+FROM golang:1.24-alpine
 
 WORKDIR /app
 
