@@ -1,0 +1,15 @@
+apiVersion: gateway.kyma-project.io/v1beta1
+kind: APIRule
+metadata:
+  name: mrm-cell-api-rule
+spec:
+  gateway: kyma-gateway.kyma-system.svc.cluster.local
+  service:
+    name: mrm-cell-public
+    port: 9081
+  host: mrm-cell.c9ff5e0.kyma.ondemand.com
+  rules:
+    - path: /.*
+      methods: ["GET", "POST"]
+      accessStrategies:
+        - handler: allow

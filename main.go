@@ -17,29 +17,29 @@ import (
 	"mrm_cell/internal/cluster"
 	"mrm_cell/internal/config"
 	"mrm_cell/internal/crypto"
-	// "mrm_cell/internal/dns"
 	"mrm_cell/internal/etcd"
 	"mrm_cell/internal/fsm"
 	"mrm_cell/internal/handlers"
 	"mrm_cell/internal/secrets"
 	"mrm_cell/internal/store"
 	"mrm_cell/internal/taskrunner"
-	// "mrm_cell/internal/telemetry"
+	"mrm_cell/internal/telemetry"
 
 	clientv3 "go.etcd.io/etcd/client/v3"
 	embed "go.etcd.io/etcd/server/v3/embed"
 )
 
 var etcdServer *embed.Etcd
-
 const scenarioID = "S001"
 
+// Server holds the long-lived, shared components of our application.
 type Server struct {
 	etcdClient *clientv3.Client
 	runner     *taskrunner.Runner
 	logger     *slog.Logger
 }
 
+// NewServer creates a new server instance.
 func NewServer(etcdClient *clientv3.Client, runner *taskrunner.Runner, logger *slog.Logger) *Server {
 	return &Server{
 		etcdClient: etcdClient,
@@ -53,110 +53,133 @@ func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	ctx := context.Background()
 
-	// --- THIS IS THE ARCHITECTURAL FIX ---
-	// The application logic is now decoupled from the startup sequence.
+	// Initialize Telemetry
+	cfg, err := telemetry.LoadConfig("telemetry.yaml")
+	if err != nil {
+		logger.Error("Failed to load telemetry config, using defaults", "error", err)
+		// Non-fatal, continue with defaults
+	} else {
+		shutdown, err := telemetry.Initialize(ctx, cfg)
+		if err != nil {
+			logger.Error("Failed to initialize telemetry", "error", err)
+			return
+		}
+		defer shutdown(ctx)
+	}
 
-	// 1. Initialize non-blocking components first.
+	// Initialize Crypto and Secrets services
 	encryptionKey := os.Getenv("ENCRYPTION_KEY")
 	if encryptionKey == "" {
-		logger.Error("FATAL: ENCRYPTION_KEY not set.")
+		logger.Error("FATAL: ENCRYPTION_KEY environment variable not set.")
 		os.Exit(1)
 	}
 	cryptoService, err := crypto.NewService(encryptionKey)
 	if err != nil {
-		logger.Error("FATAL: Failed to init crypto service", "error", err)
+		logger.Error("FATAL: Failed to initialize crypto service", "error", err)
 		os.Exit(1)
 	}
 	secretsManager, err := secrets.NewManager(logger)
 	if err != nil {
-		logger.Error("FATAL: Failed to init secrets manager", "error", err)
+		logger.Error("FATAL: Failed to initialize secrets manager", "error", err)
 		os.Exit(1)
 	}
 
-	// This temporary client is ONLY for the initial secret sync.
-	tempEtcdClient, err := clientv3.New(clientv3.Config{Endpoints: []string{"http://localhost:2379"}, DialTimeout: 5 * time.Second})
-	if err == nil {
-		if err := syncSecrets(ctx, logger, secretsManager, cryptoService, tempEtcdClient); err != nil {
-			logger.Warn("Initial secret sync failed, will rely on existing secrets in etcd", "error", err)
-		}
-		tempEtcdClient.Close()
-	} else {
-		logger.Warn("Could not create temp client for secret sync, assuming secrets are already in etcd", "error", err)
-	}
+	// --- CORRECTED STARTUP SEQUENCE TO PREVENT DEADLOCK ---
 
-	// 2. Start the HTTP server immediately. This makes the /health endpoint available for the readiness probe.
-	// We create a placeholder server object for now. The real logic will be initialized later.
+	// 1. Create a placeholder Server object. The real components will be added later.
 	appServer := &Server{logger: logger}
+
+	// 2. Start the HTTP server IMMEDIATELY.
+	// This makes the /health endpoint available for the readiness probe before etcd blocks.
 	startHTTPServer(config.HTTPPort, appServer)
 
-	// 3. Now, start the heavy, blocking initialization.
+	// 3. Now, start the heavy, blocking initialization of the etcd server.
 	etcdConfig, err := initializeEtcd(config)
 	if err != nil {
-		logger.Error("Failed to initialize etcd", "error", err)
-		return
+		logger.Error("FATAL: Failed to initialize etcd", "error", err)
+		os.Exit(1)
 	}
 	defer closeEtcdServer()
 
 	// 4. Create the final, shared etcd client for the running application.
-	client, err := clientv3.New(clientv3.Config{Endpoints: []string{fmt.Sprintf("http://%s:%d", etcdConfig.HostID, etcdConfig.ClientPort)}, DialTimeout: 5 * time.Second})
+	client, err := clientv3.New(clientv3.Config{
+		Endpoints:   []string{fmt.Sprintf("http://%s:%d", etcdConfig.HostID, etcdConfig.ClientPort)},
+		DialTimeout: 5 * time.Second,
+	})
 	if err != nil {
-		logger.Error("Failed to create shared etcd client", "error", err)
-		return
+		logger.Error("FATAL: Failed to create shared etcd client", "error", err)
+		os.Exit(1)
 	}
 	defer client.Close()
 
-	// 5. Populate the appServer with the real components.
+	// 5. Perform the one-time secret synchronization now that etcd is ready.
+	if err := syncSecrets(ctx, logger, secretsManager, cryptoService, client); err != nil {
+		logger.Error("FATAL: Failed to sync secrets from OpenBao to etcd", "error", err)
+		os.Exit(1)
+	}
+
+	// 6. Populate the placeholder appServer with the real, initialized components.
 	appServer.etcdClient = client
 	appServer.runner = taskrunner.NewRunner(logger, 10, "")
-
-	// 6. Start the background cluster monitor.
+	
+	// 7. Start the background cluster monitor.
 	clusterMonitor := cluster.NewMonitor(client, logger, config.NodeID)
 	clusterMonitor.Start(context.Background())
-
+	
 	logger.Info("Application fully initialized and ready.")
 	waitForShutdown()
 }
 
-// ... (The rest of the file, including the Server methods and helpers, is unchanged) ...
-
+// ExecuteFSM is the method that handles a new FSM execution.
 func (s *Server) ExecuteFSM(command string) {
 	ctx := context.Background()
 	s.runner.SetCommand(command)
+
 	baseStore := store.NewExecutionStore(s.etcdClient, s.logger, scenarioID, "")
+
 	cfg, err := bootstrapFSMConfig(ctx, s.logger, baseStore, "fsm-config.yaml")
 	if err != nil {
 		s.logger.Error("Could not bootstrap FSM configuration.", "error", err)
 		return
 	}
+
 	fsmCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
+
 	fsmMachine := fsm.NewMachine(fsmCtx, cfg, s.runner, s.logger, baseStore)
 	fsmMachine.Run(fsmCtx)
 }
+
+// RestartFSM is the method that handles restarting a failed execution.
 func (s *Server) RestartFSM(sid string, eid string) {
 	logger := s.logger.With("sid", sid, "eid", eid)
 	logger.Info("Starting restart process for execution.")
 	ctx := context.Background()
 	execStore := store.NewExecutionStore(s.etcdClient, logger, sid, eid)
+
 	fsmConfig, err := bootstrapFSMConfig(ctx, logger, execStore, "fsm-config.yaml")
 	if err != nil {
 		logger.Error("Restart failed: could not get FSM config.", "error", err)
 		return
 	}
+
 	header, err := execStore.GetHeader(ctx)
 	if err != nil {
 		logger.Error("Restart failed: could not get execution header.", "error", err)
 		return
 	}
+
 	if header.Status == store.StatusCompleted {
 		logger.Warn("Execution is already completed. Nothing to restart.")
 		return
 	}
+
 	allTasks, err := execStore.GetAllTasks(ctx)
 	if err != nil {
 		logger.Error("Restart failed: could not get task details.", "error", err)
 		return
 	}
+
 	logger.Info("Resetting non-completed tasks to pending status.")
 	for i, task := range allTasks {
 		if task.Status != store.StatusCompleted {
@@ -167,11 +190,13 @@ func (s *Server) RestartFSM(sid string, eid string) {
 			allTasks[i].Error = ""
 		}
 	}
+
 	header.Status = store.StatusInProgress
 	header.Error = ""
 	now := time.Now()
 	header.StartTime = now
 	header.EndTime = nil
+
 	if err := execStore.UpdateHeader(ctx, *header); err != nil {
 		logger.Error("Restart failed: could not update header.", "error", err)
 		return
@@ -183,6 +208,7 @@ func (s *Server) RestartFSM(sid string, eid string) {
 		}
 		go execStore.UpdateTaskInDetails(ctx, task)
 	}
+
 	logger.Info("State has been reset in etcd. Triggering task runner to resume execution.")
 	var tasksToRun []config.Task
 	foundTasks := false
@@ -193,13 +219,18 @@ func (s *Server) RestartFSM(sid string, eid string) {
 			break
 		}
 	}
+
 	if !foundTasks {
 		logger.Error("Restart failed: could not find tasks for target state in the current config.", "state", header.TargetState)
 		return
 	}
+
 	s.runner.ExecuteActions(ctx, tasksToRun, execStore)
 	logger.Info("Restart execution has been handed off to the runner.")
 }
+
+// --- Helper Functions ---
+
 func startHTTPServer(httpPort int, server *Server) {
 	handlers.SetupHandlers(server)
 	go func() {
@@ -209,6 +240,7 @@ func startHTTPServer(httpPort int, server *Server) {
 		}
 	}()
 }
+
 func bootstrapFSMConfig(ctx context.Context, logger *slog.Logger, s *store.ExecutionStore, configPath string) (*config.Config, error) {
 	cfg, err := s.GetFSMConfig(ctx)
 	if err == nil {
@@ -227,6 +259,7 @@ func bootstrapFSMConfig(ctx context.Context, logger *slog.Logger, s *store.Execu
 	}
 	return s.GetFSMConfig(ctx)
 }
+
 func syncSecrets(ctx context.Context, logger *slog.Logger, sm *secrets.SecretsManager, cs *crypto.CryptoService, etcdClient *clientv3.Client) error {
 	logger.Info("Starting secrets synchronization from OpenBao to etcd...")
 	cfg, err := config.Load("fsm-config.yaml")
@@ -278,8 +311,8 @@ func syncSecrets(ctx context.Context, logger *slog.Logger, sm *secrets.SecretsMa
 }
 
 type Config struct {
-	NodeID, HostID, DataDir, CloudProvider, InitialCluster, ClusterState                            string
-	ClientPort, PeerPort, HTTPPort                                                                  int
+	NodeID, HostID, DataDir, CloudProvider, InitialCluster, ClusterState string
+	ClientPort, PeerPort, HTTPPort                                       int
 	CAFile, ServerCertFile, ServerKeyFile, PeerCertFile, PeerKeyFile, ClientCertFile, ClientKeyFile string
 }
 
@@ -304,17 +337,20 @@ func parseFlags() *Config {
 	flag.Parse()
 	return config
 }
+
 func closeEtcdServer() {
 	if etcdServer != nil {
 		etcdServer.Close()
 	}
 }
+
 func waitForShutdown() {
 	sigc := make(chan os.Signal, 1)
 	signal.Notify(sigc, syscall.SIGINT, syscall.SIGTERM)
 	<-sigc
 	slog.Info("Shutting down...")
 }
+
 func initializeEtcd(config *Config) (*etcd.Config, error) {
 	etcdConfig := etcd.NewDefaultConfig()
 	etcdConfig.NodeID = config.NodeID
@@ -324,7 +360,15 @@ func initializeEtcd(config *Config) (*etcd.Config, error) {
 	etcdConfig.ClusterState = config.ClusterState
 	etcdConfig.ClientPort = config.ClientPort
 	etcdConfig.PeerPort = config.PeerPort
-	etcdConfig.TLS = etcd.TLSConfig{CAFile: config.CAFile, ServerCertFile: config.ServerCertFile, ServerKeyFile: config.ServerKeyFile, PeerCertFile: config.PeerCertFile, PeerKeyFile: config.PeerKeyFile, ClientCertFile: config.ClientCertFile, ClientKeyFile: config.ClientKeyFile}
+	etcdConfig.TLS = etcd.TLSConfig{
+		CAFile:         config.CAFile,
+		ServerCertFile: config.ServerCertFile,
+		ServerKeyFile:  config.ServerKeyFile,
+		PeerCertFile:   config.PeerCertFile,
+		PeerKeyFile:    config.PeerKeyFile,
+		ClientCertFile: config.ClientCertFile,
+		ClientKeyFile:  config.ClientKeyFile,
+	}
 	var err error
 	etcdServer, err = etcd.StartNode(etcdConfig)
 	if err != nil {

@@ -19,7 +19,6 @@ kind: Service
 metadata:
   name: mrm-cell-public
 spec:
-  type: LoadBalancer
   selector:
     app: mrm-cell
   ports:
