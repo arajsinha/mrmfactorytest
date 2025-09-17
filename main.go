@@ -27,24 +27,38 @@ import (
 
 	clientv3 "go.etcd.io/etcd/client/v3"
 	embed "go.etcd.io/etcd/server/v3/embed"
+
+	// New imports for Kubernetes
+	batchv1 "k8s.io/api/batch/v1"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 )
 
 var etcdServer *embed.Etcd
-const scenarioID = "S001"
 
-// Server holds the long-lived, shared components of our application.
+const scenarioID = "S001" // Default for admin tasks
+
+// Server now holds the Kubernetes client for orchestration.
 type Server struct {
 	etcdClient *clientv3.Client
 	runner     *taskrunner.Runner
 	logger     *slog.Logger
+	kubeClient *kubernetes.Clientset
+	configFile string
+	pluginsDir string
 }
 
 // NewServer creates a new server instance.
-func NewServer(etcdClient *clientv3.Client, runner *taskrunner.Runner, logger *slog.Logger) *Server {
+func NewServer(etcdClient *clientv3.Client, runner *taskrunner.Runner, logger *slog.Logger, kubeClient *kubernetes.Clientset, configFile, pluginsDir string) *Server {
 	return &Server{
 		etcdClient: etcdClient,
 		runner:     runner,
 		logger:     logger,
+		kubeClient: kubeClient,
+		configFile: configFile,
+		pluginsDir: pluginsDir,
 	}
 }
 
@@ -57,7 +71,6 @@ func main() {
 	cfg, err := telemetry.LoadConfig("telemetry.yaml")
 	if err != nil {
 		logger.Error("Failed to load telemetry config, using defaults", "error", err)
-		// Non-fatal, continue with defaults
 	} else {
 		shutdown, err := telemetry.Initialize(ctx, cfg)
 		if err != nil {
@@ -84,16 +97,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	// --- CORRECTED STARTUP SEQUENCE TO PREVENT DEADLOCK ---
-
-	// 1. Create a placeholder Server object. The real components will be added later.
-	appServer := &Server{logger: logger}
-
-	// 2. Start the HTTP server IMMEDIATELY.
-	// This makes the /health endpoint available for the readiness probe before etcd blocks.
-	startHTTPServer(config.HTTPPort, appServer)
-
-	// 3. Now, start the heavy, blocking initialization of the etcd server.
+	// Start the embedded etcd server
 	etcdConfig, err := initializeEtcd(config)
 	if err != nil {
 		logger.Error("FATAL: Failed to initialize etcd", "error", err)
@@ -101,7 +105,7 @@ func main() {
 	}
 	defer closeEtcdServer()
 
-	// 4. Create the final, shared etcd client for the running application.
+	// Create a single, shared etcd client
 	client, err := clientv3.New(clientv3.Config{
 		Endpoints:   []string{fmt.Sprintf("http://%s:%d", etcdConfig.HostID, etcdConfig.ClientPort)},
 		DialTimeout: 5 * time.Second,
@@ -112,32 +116,116 @@ func main() {
 	}
 	defer client.Close()
 
-	// 5. Perform the one-time secret synchronization now that etcd is ready.
-	if err := syncSecrets(ctx, logger, secretsManager, cryptoService, client); err != nil {
-		logger.Error("FATAL: Failed to sync secrets from OpenBao to etcd", "error", err)
+	// Sync secrets from OpenBao to etcd (using the default config file)
+	if err := syncSecrets(ctx, logger, secretsManager, cryptoService, client, config.ConfigFile); err != nil {
+		logger.Error("FATAL: Failed to sync secrets", "error", err)
 		os.Exit(1)
 	}
 
-	// 6. Populate the placeholder appServer with the real, initialized components.
-	appServer.etcdClient = client
-	appServer.runner = taskrunner.NewRunner(logger, 10, "")
-	
-	// 7. Start the background cluster monitor.
+	// Initialize Kubernetes Client
+	kubeConfig, err := rest.InClusterConfig()
+	if err != nil {
+		logger.Error("FATAL: Failed to get in-cluster Kubernetes config", "error", err)
+		os.Exit(1)
+	}
+	kubeClient, err := kubernetes.NewForConfig(kubeConfig)
+	if err != nil {
+		logger.Error("FATAL: Failed to create Kubernetes client", "error", err)
+		os.Exit(1)
+	}
+
+	// Create the core application components
+	runner := taskrunner.NewRunner(logger, 10, config.Command, config.PluginsDir)
+	appServer := NewServer(client, runner, logger, kubeClient, config.ConfigFile, config.PluginsDir)
+
+	// Start background services
 	clusterMonitor := cluster.NewMonitor(client, logger, config.NodeID)
 	clusterMonitor.Start(context.Background())
-	
-	logger.Info("Application fully initialized and ready.")
-	waitForShutdown()
+	startHTTPServer(config.HTTPPort, appServer)
+
+	// If a command is passed via flag, this instance is a one-shot Job.
+	// Otherwise, it's a long-running server.
+	if config.Command != "" {
+		appServer.ExecuteFSM(config.Command)
+		logger.Info("One-shot job execution finished.")
+	} else {
+		logger.Info("Application initialized as a long-running service.")
+		waitForShutdown()
+	}
 }
 
-// ExecuteFSM is the method that handles a new FSM execution.
+// OrchestrateExecution is the new method for handling user-driven workflows.
+func (s *Server) OrchestrateExecution(configRepoURL string, command string) error {
+	s.logger.Info("Received new orchestration request", "repo", configRepoURL, "command", command)
+
+	jobName := fmt.Sprintf("mrm-exec-%d", time.Now().UnixNano())
+	job := &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{ Name: jobName, Namespace: "default" },
+		Spec: batchv1.JobSpec{
+			Template: corev1.PodTemplateSpec{
+				Spec: corev1.PodSpec{
+					Volumes: []corev1.Volume{
+						{Name: "workspace", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
+						{Name: "git-secret-volume", VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{SecretName: "git-deploy-key", DefaultMode: &[]int32{0400}[0]}}},
+					},
+					InitContainers: []corev1.Container{
+						{
+							Name:  "git-cloner",
+							Image: "alpine/git",
+							Args:  []string{"clone", "--depth=1", configRepoURL, "/workspace"},
+							VolumeMounts: []corev1.VolumeMount{
+								{Name: "workspace", MountPath: "/workspace"},
+								{Name: "git-secret-volume", MountPath: "/root/.ssh", ReadOnly: true},
+							},
+						},
+					},
+					Containers: []corev1.Container{
+						{
+							Name:  "mrm-cell-engine",
+							Image: "arajsinha/mrm-cell-factory:latest",
+							Command: []string{
+								"./mrm-cell",
+								"--config-file=/workspace/fsm-config.yaml",
+								// --- THIS IS THE FIX ---
+								// The plugins are inside our image at /app/plugins, not the temporary workspace.
+								"--plugins-dir=/app/plugins",
+								// --- END OF FIX ---
+								fmt.Sprintf("--command=%s", command),
+							},
+							VolumeMounts: []corev1.VolumeMount{ {Name: "workspace", MountPath: "/workspace"}, },
+							EnvFrom: []corev1.EnvFromSource{
+								{SecretRef: &corev1.SecretEnvSource{LocalObjectReference: corev1.LocalObjectReference{Name: "mrm-cell-secrets"}}},
+							},
+						},
+					},
+					RestartPolicy: "Never",
+				},
+			},
+			BackoffLimit: &[]int32{0}[0],
+		},
+	}
+
+	s.logger.Info("Creating new Kubernetes Job for execution", "jobName", jobName)
+	_, err := s.kubeClient.BatchV1().Jobs("default").Create(context.TODO(), job, metav1.CreateOptions{})
+	if err != nil {
+		s.logger.Error("Failed to create Kubernetes Job", "error", err)
+		return err
+	}
+
+	s.logger.Info("Successfully launched new execution job", "jobName", jobName)
+	return nil
+}
+
+// --- END OF FIX ---
+
+// ExecuteFSM is the method that handles a new FSM execution (for admin/debug purposes).
 func (s *Server) ExecuteFSM(command string) {
 	ctx := context.Background()
 	s.runner.SetCommand(command)
 
 	baseStore := store.NewExecutionStore(s.etcdClient, s.logger, scenarioID, "")
 
-	cfg, err := bootstrapFSMConfig(ctx, s.logger, baseStore, "fsm-config.yaml")
+	cfg, err := bootstrapFSMConfig(ctx, s.logger, baseStore, s.configFile)
 	if err != nil {
 		s.logger.Error("Could not bootstrap FSM configuration.", "error", err)
 		return
@@ -157,7 +245,7 @@ func (s *Server) RestartFSM(sid string, eid string) {
 	ctx := context.Background()
 	execStore := store.NewExecutionStore(s.etcdClient, logger, sid, eid)
 
-	fsmConfig, err := bootstrapFSMConfig(ctx, logger, execStore, "fsm-config.yaml")
+	fsmConfig, err := bootstrapFSMConfig(ctx, logger, execStore, s.configFile)
 	if err != nil {
 		logger.Error("Restart failed: could not get FSM config.", "error", err)
 		return
@@ -219,7 +307,6 @@ func (s *Server) RestartFSM(sid string, eid string) {
 			break
 		}
 	}
-
 	if !foundTasks {
 		logger.Error("Restart failed: could not find tasks for target state in the current config.", "state", header.TargetState)
 		return
@@ -260,11 +347,11 @@ func bootstrapFSMConfig(ctx context.Context, logger *slog.Logger, s *store.Execu
 	return s.GetFSMConfig(ctx)
 }
 
-func syncSecrets(ctx context.Context, logger *slog.Logger, sm *secrets.SecretsManager, cs *crypto.CryptoService, etcdClient *clientv3.Client) error {
+func syncSecrets(ctx context.Context, logger *slog.Logger, sm *secrets.SecretsManager, cs *crypto.CryptoService, etcdClient *clientv3.Client, configPath string) error {
 	logger.Info("Starting secrets synchronization from OpenBao to etcd...")
-	cfg, err := config.Load("fsm-config.yaml")
+	cfg, err := config.Load(configPath)
 	if err != nil {
-		return fmt.Errorf("could not load fsm-config.yaml to discover secrets: %w", err)
+		return fmt.Errorf("could not load fsm-config to discover secrets: %w", err)
 	}
 	pathsToFetch := make(map[string]bool)
 	for _, action := range cfg.FSM.Behavior.Actions {
@@ -311,9 +398,10 @@ func syncSecrets(ctx context.Context, logger *slog.Logger, sm *secrets.SecretsMa
 }
 
 type Config struct {
-	NodeID, HostID, DataDir, CloudProvider, InitialCluster, ClusterState string
-	ClientPort, PeerPort, HTTPPort                                       int
+	NodeID, HostID, DataDir, CloudProvider, InitialCluster, ClusterState                            string
+	ClientPort, PeerPort, HTTPPort                                                                  int
 	CAFile, ServerCertFile, ServerKeyFile, PeerCertFile, PeerKeyFile, ClientCertFile, ClientKeyFile string
+	Command, ConfigFile, PluginsDir                                                                 string
 }
 
 func parseFlags() *Config {
@@ -334,6 +422,9 @@ func parseFlags() *Config {
 	flag.StringVar(&config.PeerKeyFile, "etcd-peer-key-file", "", "Path to etcd peer key file")
 	flag.StringVar(&config.ClientCertFile, "etcd-client-cert-file", "", "Path to etcd client certificate file")
 	flag.StringVar(&config.ClientKeyFile, "etcd-client-key-file", "", "Path to etcd client key file")
+	flag.StringVar(&config.ConfigFile, "config-file", "fsm-config.yaml", "Path to the FSM configuration file.")
+	flag.StringVar(&config.PluginsDir, "plugins-dir", "plugins", "Path to the directory containing .so plugins.")
+	flag.StringVar(&config.Command, "command", "", "FSM event/command to execute (for jobs)")
 	flag.Parse()
 	return config
 }
@@ -343,14 +434,12 @@ func closeEtcdServer() {
 		etcdServer.Close()
 	}
 }
-
 func waitForShutdown() {
 	sigc := make(chan os.Signal, 1)
 	signal.Notify(sigc, syscall.SIGINT, syscall.SIGTERM)
 	<-sigc
 	slog.Info("Shutting down...")
 }
-
 func initializeEtcd(config *Config) (*etcd.Config, error) {
 	etcdConfig := etcd.NewDefaultConfig()
 	etcdConfig.NodeID = config.NodeID

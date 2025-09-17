@@ -1,0 +1,65 @@
+# This is a template for a single, sandboxed execution run.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  # The orchestrator will generate a unique name for each job, e.g., "mrm-exec-abc123"
+  generateName: mrm-execution-
+spec:
+  # This section is the blueprint for the temporary pod that will run the job.
+  template:
+    spec:
+      # --- 1. The Workspace ---
+      # Create a temporary, shared "folder" that both containers below can access.
+      volumes:
+      - name: workspace
+        emptyDir: {}
+      - name: git-secret-volume
+        secret:
+          secretName: git-deploy-key # The SSH key for cloning private repos
+          defaultMode: 0400
+
+      # --- 2. The Setup Container (Init Container) ---
+      # This container runs FIRST and must complete successfully before the main container starts.
+      # Its only job is to download the user's workflow files.
+      initContainers:
+      - name: git-cloner
+        image: alpine/git # A small, official image with only git installed
+        # The command to run: git clone <repo_url> /workspace
+        args:
+          - clone
+          # The orchestrator will replace this with the user's repo URL from the API call
+          - "git@github.com:some-user/user-workflow-repo.git" 
+          - /workspace
+        # Mount the shared folder and the git secret
+        volumeMounts:
+        - name: workspace
+          mountPath: /workspace
+        - name: git-secret-volume
+          mountPath: /etc/git-secret/ssh
+
+      # --- 3. The Main Application Container ---
+      # This container runs AFTER the git-cloner has successfully downloaded the files.
+      containers:
+      - name: mrm-cell-engine
+        # It uses the same production-ready image we've already built
+        image: arajsinha/mrm-cell-factory:latest 
+        # Here we use the new command-line flags we created in the last step
+        command:
+          - "./mrm-cell"
+          # Point the engine to the config file downloaded by the initContainer
+          - "--config-file=/workspace/fsm-config.yaml"
+          # Point the engine to the plugins downloaded by the initContainer
+          - "--plugins-dir=/workspace/plugins"
+        # Mount the shared workspace so it can find the files
+        volumeMounts:
+        - name: workspace
+          mountPath: /workspace
+        # Inject the secrets needed by the application itself (Bao, Encryption Key)
+        envFrom:
+        - secretRef:
+            name: mrm-cell-secrets
+
+      # This ensures the pod doesn't restart if the FSM fails, as a Job is a one-shot operation.
+      restartPolicy: Never
+  # If the job fails, don't automatically retry it.
+  backoffLimit: 0

@@ -9,6 +9,8 @@ import (
 	"mrm_cell/internal/crypto"
 	"mrm_cell/internal/store"
 	"os"
+	"path/filepath"
+	"plugin"
 	"strings"
 	"sync"
 	"time"
@@ -20,23 +22,24 @@ type DispatchableTask struct {
 	Iteration int
 }
 
-// Runner encapsulates the logic for executing a set of tasks.
+// Runner now holds the path to the plugins directory.
 type Runner struct {
 	logger     *slog.Logger
 	numWorkers int
 	command    string
+	pluginsDir string
 }
 
-// NewRunner creates a new task runner.
-func NewRunner(logger *slog.Logger, numWorkers int, command string) *Runner {
+// NewRunner is updated to accept the plugins directory path.
+func NewRunner(logger *slog.Logger, numWorkers int, command string, pluginsDir string) *Runner {
 	return &Runner{
 		logger:     logger,
 		numWorkers: numWorkers,
 		command:    command,
+		pluginsDir: pluginsDir,
 	}
 }
 
-// GetCommand returns the command string for this runner.
 func (r *Runner) GetCommand() string {
 	return r.command
 }
@@ -236,7 +239,7 @@ func (r *Runner) dispatcher(
 	}
 }
 
-// worker handles the execution of a single task.
+// worker handles the execution of a single task, including secret resolution and plugin loading.
 func (r *Runner) worker(
 	ctx context.Context,
 	wg *sync.WaitGroup,
@@ -260,9 +263,7 @@ func (r *Runner) worker(
 			}
 			task := dispatchable.Config
 			iteration := dispatchable.Iteration
-
 			logger := r.logger.With("task_id", task.ID, "iteration", iteration)
-
 			taskDetail, err := execStore.GetTask(ctx, task.ID)
 			if err != nil {
 				logger.Error("Could not get initial task details from store", "error", err)
@@ -273,7 +274,6 @@ func (r *Runner) worker(
 			taskDetail.Status = store.StatusInProgress
 			taskDetail.StartTime = &now
 			taskDetail.Iteration = iteration
-
 			logger.Info("▶️ Worker starting task, updating status to in-progress")
 			if err := execStore.UpdateTask(ctx, *taskDetail); err != nil {
 				logger.Error("Failed to mark task as in-progress", "error", err)
@@ -281,12 +281,8 @@ func (r *Runner) worker(
 			}
 			go execStore.UpdateTaskInDetails(ctx, *taskDetail)
 
-			// --- FIX for 'goto' error ---
-			// Declare variables at the top of the block before any potential goto.
 			var pluginOutput interface{}
 			var errExec error
-
-			// --- SECRET RESOLUTION LOGIC ---
 			preparedContext := make(map[string]interface{})
 			if task.Context != nil {
 				for key, val := range task.Context {
@@ -295,19 +291,16 @@ func (r *Runner) worker(
 						if baoPath, hasPath := pathMap["baoPath"].(string); hasPath {
 							resolvedBaoPath := strings.Replace(baoPath, "{{.ScenarioID}}", execStore.SID(), -1)
 							etcdKey := "mrm/secrets/" + resolvedBaoPath
-
 							resp, err := execStore.Client().Get(ctx, etcdKey)
 							if err != nil || len(resp.Kvs) == 0 {
 								taskDetail.Error = fmt.Sprintf("failed to fetch secret from etcd at key %s: %v", etcdKey, err)
 								goto finalize
 							}
-
 							var encryptedSecrets map[string]string
 							if err := json.Unmarshal(resp.Kvs[0].Value, &encryptedSecrets); err != nil {
 								taskDetail.Error = fmt.Sprintf("failed to unmarshal encrypted secret from key %s: %v", etcdKey, err)
 								goto finalize
 							}
-
 							if secretKey, wantsSpecificKey := pathMap["key"].(string); wantsSpecificKey {
 								encryptedVal, found := encryptedSecrets[secretKey]
 								if !found {
@@ -339,10 +332,9 @@ func (r *Runner) worker(
 				}
 			}
 			
-			// Use '=' for assignment since variables are already declared.
-			pluginOutput, errExec = executePluginTask(task, preparedContext)
+			pluginOutput, errExec = r.executePluginTask(task, preparedContext)
 
-		finalize: // A label to jump to for recording the final status.
+		finalize:
 			endTime := time.Now()
 			taskDetail.EndTime = &endTime
 			if errExec != nil || taskDetail.Error != "" {
@@ -356,24 +348,45 @@ func (r *Runner) worker(
 				taskDetail.Result = pluginOutput
 				logger.Info("🚀 Worker finished task successfully", "duration", endTime.Sub(*taskDetail.StartTime))
 			}
-
 			if err := execStore.UpdateTask(ctx, *taskDetail); err != nil {
 				logger.Error("CRITICAL: Failed to write final task status to individual key!", "error", err)
 			}
 			go execStore.UpdateTaskInDetails(ctx, *taskDetail)
-
 			select {
 			case workerDoneSignal <- true:
 			case <-ctx.Done():
 			}
-
 		case <-ctx.Done():
 			return
 		}
 	}
 }
 
+// executePluginTask is the real implementation that loads and runs a .so plugin.
+func (r *Runner) executePluginTask(task config.Task, preparedContext map[string]interface{}) (interface{}, error) {
+	// Construct the full path to the plugin file.
+	pluginPath := filepath.Join(r.pluginsDir, task.Package)
 
+	p, err := plugin.Open(pluginPath)
+	if err != nil {
+		return nil, fmt.Errorf("task '%s': error loading plugin %s: %w", task.ID, task.Package, err)
+	}
+
+	// Look up the exported 'Execute' function within the plugin.
+	execSymbol, err := p.Lookup(task.Method)
+	if err != nil {
+		return nil, fmt.Errorf("task '%s': error looking up method '%s' in plugin %s: %w", task.ID, task.Method, task.Package, err)
+	}
+
+	// Assert that the symbol is of the correct function type.
+	executeFunc, ok := execSymbol.(func(map[string]interface{}) (interface{}, error))
+	if !ok {
+		return nil, fmt.Errorf("task '%s': method '%s' in plugin %s has incorrect signature", task.ID, task.Method, task.Package)
+	}
+
+	// Execute the plugin function.
+	return executeFunc(preparedContext)
+}
 
 // detectDependencyCycle and helpers check for circular dependencies in the config.
 const (
