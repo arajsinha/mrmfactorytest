@@ -151,3 +151,5 @@ replace (
 	k8s.io/pod-security-admission => k8s.io/pod-security-admission v0.29.3
 	k8s.io/sample-apiserver => k8s.io/sample-apiserver v0.29.3
 )
+
+replace sigs.k8s.io/structured-merge-diff/v4 => sigs.k8s.io/structured-merge-diff/v4 v4.4.1
