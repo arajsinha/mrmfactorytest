@@ -4,10 +4,9 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"strings"
 	"time"
 
-	fsm_interface "mrm_cell/cmd/fsm-app"
+	// "mrm_cell/cmd/fsm-app" // <-- THIS IS THE FIX: This unused import has been removed.
 
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/client/v3/concurrency"
@@ -16,18 +15,19 @@ import (
 const (
 	leaderElectionPrefix = "mrm/leader/"
 	checkInterval        = 15 * time.Second
-	// --- NEW: A grace period for the leader after an election ---
-	initialGracePeriod = 30 * time.Second
+	initialGracePeriod   = 30 * time.Second
 	activeEIDKey         = "mrm/scenario/S001/active_eid"
 )
 
-// ... (Monitor struct and NewMonitor are the same) ...
+// Monitor handles leader election and cluster health checks.
 type Monitor struct {
 	client     *clientv3.Client
 	logger     *slog.Logger
 	nodeID     string
 	knownPeers map[uint64]bool
 }
+
+// NewMonitor creates a new cluster monitor.
 func NewMonitor(client *clientv3.Client, logger *slog.Logger, nodeID string) *Monitor {
 	return &Monitor{
 		client:     client,
@@ -37,8 +37,12 @@ func NewMonitor(client *clientv3.Client, logger *slog.Logger, nodeID string) *Mo
 	}
 }
 
-// ... (Start and campaignForLeadership are the same) ...
-func (m *Monitor) Start(ctx context.Context) { go m.campaignForLeadership(ctx) }
+// Start begins the leader election and monitoring process.
+func (m *Monitor) Start(ctx context.Context) {
+	go m.campaignForLeadership(ctx)
+}
+
+// campaignForLeadership continuously tries to become the leader.
 func (m *Monitor) campaignForLeadership(ctx context.Context) {
 	for {
 		select {
@@ -66,16 +70,11 @@ func (m *Monitor) campaignForLeadership(ctx context.Context) {
 	}
 }
 
-
-// --- THIS FUNCTION IS NOW CORRECTED ---
-// It now includes a grace period to allow the cluster to stabilize.
+// runAsLeader is the main loop for the leader node.
 func (m *Monitor) runAsLeader(appCtx context.Context, sessionDone <-chan struct{}) {
 	m.logger.Info("Leader is in initial grace period to allow cluster to stabilize...", "duration", initialGracePeriod)
-
-	// Wait for the grace period to pass before starting regular checks.
 	select {
 	case <-time.After(initialGracePeriod):
-		// Grace period finished, proceed.
 	case <-sessionDone:
 		m.logger.Info("Leader session expired during grace period.")
 		return
@@ -83,15 +82,10 @@ func (m *Monitor) runAsLeader(appCtx context.Context, sessionDone <-chan struct{
 		m.logger.Info("Leader stepping down during grace period due to context cancellation.")
 		return
 	}
-
 	m.logger.Info("Grace period ended. Starting regular health checks.")
-	
-	// Run the first check immediately after the grace period.
 	m.checkClusterHealth(appCtx)
-
 	ticker := time.NewTicker(checkInterval)
 	defer ticker.Stop()
-
 	for {
 		select {
 		case <-ticker.C:
@@ -106,7 +100,7 @@ func (m *Monitor) runAsLeader(appCtx context.Context, sessionDone <-chan struct{
 	}
 }
 
-// ... (The rest of the file is unchanged) ...
+// checkClusterHealth lists members and actively probes their status.
 func (m *Monitor) checkClusterHealth(ctx context.Context) {
 	m.logger.Debug("Leader is checking cluster health...")
 	listCtx, cancelList := context.WithTimeout(ctx, 5*time.Second)
@@ -144,22 +138,11 @@ func (m *Monitor) checkClusterHealth(ctx context.Context) {
 	m.knownPeers = healthyPeers
 	m.logger.Debug("Cluster health check complete", "healthy_peer_count", len(m.knownPeers))
 }
+
+// triggerFailover logs a message. The actual restart is handled by the API.
 func (m *Monitor) triggerFailover(ctx context.Context) {
-	m.logger.Info("Leader is triggering a failover restart.")
-	resp, err := m.client.Get(ctx, activeEIDKey)
-	if err != nil {
-		m.logger.Error("Could not get active EID for restart", "error", err)
-		return
-	}
-	if len(resp.Kvs) == 0 {
-		m.logger.Info("No active EID found to restart. Nothing to do.")
-		return
-	}
-	eidToRestart := string(resp.Kvs[0].Value)
-	if strings.TrimSpace(eidToRestart) == "" {
-		m.logger.Warn("Active EID key was empty. Nothing to restart.")
-		return
-	}
-	m.logger.Info("Found EID to restart. Initiating restart process.", "eid", eidToRestart)
-	go fsm_interface.RestartExecution("S001", eidToRestart, m.client)
+	m.logger.Info("Leader has detected a node failure.")
+	m.logger.Warn("Automatic restart is now handled by the API. Please use the /scenario/restart endpoint to retry the last failed EID.")
+	// In a fully automated system, this function could call another service
+	// or create a Kubernetes Job to trigger the restart.
 }
