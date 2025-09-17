@@ -16,3 +16,5 @@ run_deploy_*.sh
 
 # Ignore OS-specific files
 .DS_Store
+user_deploy_key
+user_deploy_key.pub
