@@ -174,8 +174,50 @@ func main() {
 // ... (The rest of the file is unchanged) ...
 func (s *Server) OrchestrateExecution(configRepoURL string, command string) error {
 	s.logger.Info("Received new orchestration request", "repo", configRepoURL, "command", command)
+
 	jobName := fmt.Sprintf("mrm-exec-%d", time.Now().UnixNano())
-	job := &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: jobName, Namespace: "default"}, Spec: batchv1.JobSpec{Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{Volumes: []corev1.Volume{{Name: "workspace", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}}, {Name: "git-secret-volume", VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{SecretName: "git-deploy-key", DefaultMode: &[]int32{0400}[0]}}}}, InitContainers: []corev1.Container{{Name: "git-cloner", Image: "alpine/git", Args: []string{"clone", "--depth=1", configRepoURL, "/workspace"}, VolumeMounts: []corev1.VolumeMount{{Name: "workspace", MountPath: "/workspace"}, {Name: "git-secret-volume", MountPath: "/root/.ssh", ReadOnly: true}}}}, Containers: []corev1.Container{{Name: "mrm-cell-engine", Image: "arajsinha/mrm-cell-factory:latest", Command: []string{"./mrm-cell", "--config-file=/workspace/fsm-config.yaml", "--plugins-dir=/app/plugins", fmt.Sprintf("--command=%s", command)}, VolumeMounts: []corev1.VolumeMount{{Name: "workspace", MountPath: "/workspace"}}, EnvFrom: []corev1.EnvFromSource{{SecretRef: &corev1.SecretEnvSource{LocalObjectReference: corev1.LocalObjectReference{Name: "mrm-cell-secrets"}}}}}}, RestartPolicy: "Never"}}, BackoffLimit: &[]int32{0}[0]}}
+
+	// --- THIS IS THE FIX ---
+	// We now construct an HTTPS clone URL and inject the credentials as environment variables.
+	job := &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{Name: jobName, Namespace: "default"},
+		Spec: batchv1.JobSpec{
+			Template: corev1.PodTemplateSpec{
+				Spec: corev1.PodSpec{
+					Volumes: []corev1.Volume{
+						{Name: "workspace", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
+					},
+					InitContainers: []corev1.Container{
+						{
+							Name:  "git-cloner",
+							Image: "alpine/git",
+							// This command uses the environment variables to construct the clone URL.
+							Command: []string{"sh", "-c", `git clone https://$(GIT_USERNAME):$(GIT_TOKEN)@github.com/arajsinha/mrm-user-a.git /workspace`},
+							EnvFrom: []corev1.EnvFromSource{
+								{SecretRef: &corev1.SecretEnvSource{LocalObjectReference: corev1.LocalObjectReference{Name: "github-credentials"}}},
+							},
+							VolumeMounts: []corev1.VolumeMount{
+								{Name: "workspace", MountPath: "/workspace"},
+							},
+						},
+					},
+					Containers: []corev1.Container{
+						{
+							Name:         "mrm-cell-engine",
+							Image:        "arajsinha/mrm-cell-factory:latest",
+							Command:      []string{"./mrm-cell", "--config-file=/workspace/fsm-config.yaml", "--plugins-dir=/app/plugins", fmt.Sprintf("--command=%s", command)},
+							VolumeMounts: []corev1.VolumeMount{{Name: "workspace", MountPath: "/workspace"}},
+							EnvFrom:      []corev1.EnvFromSource{{SecretRef: &corev1.SecretEnvSource{LocalObjectReference: corev1.LocalObjectReference{Name: "mrm-cell-secrets"}}}},
+						},
+					},
+					RestartPolicy: "Never",
+				},
+			},
+			BackoffLimit: &[]int32{0}[0],
+		},
+	}
+	// --- END OF FIX ---
+
 	s.logger.Info("Creating new Kubernetes Job for execution", "jobName", jobName)
 	_, err := s.kubeClient.BatchV1().Jobs("default").Create(context.TODO(), job, metav1.CreateOptions{})
 	if err != nil {
@@ -185,6 +227,7 @@ func (s *Server) OrchestrateExecution(configRepoURL string, command string) erro
 	s.logger.Info("Successfully launched new execution job", "jobName", jobName)
 	return nil
 }
+
 func (s *Server) ExecuteFSM(command string) {
 	ctx := context.Background()
 	s.runner.SetCommand(command)

@@ -1,0 +1,30 @@
+# This Role defines a set of permissions.
+# We are creating a role named 'job-creator' that is allowed to
+# create, get, list, and delete 'jobs' in the 'batch' API group.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: job-creator-role
+  namespace: default
+rules:
+- apiGroups: ["batch"]
+  resources: ["jobs"]
+  verbs: ["create", "get", "list", "delete"]
+---
+# This RoleBinding grants the permissions from the Role above
+# to a specific user or, in our case, a ServiceAccount.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: bind-job-creator-to-default-account
+  namespace: default
+subjects:
+# This applies the role to the 'default' ServiceAccount, which is
+# the one our mrm-cell pods are using.
+- kind: ServiceAccount
+  name: default
+  namespace: default
+roleRef:
+  kind: Role
+  name: job-creator-role
+  apiGroup: rbac.authorization.k8s.io
