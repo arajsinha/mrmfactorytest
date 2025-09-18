@@ -1,0 +1,25 @@
+# This Sidecar resource is a special instruction for the Istio service mesh.
+# It tells the proxy to allow ANY outgoing traffic from the pods it applies to.
+apiVersion: networking.istio.io/v1beta1
+kind: Sidecar
+metadata:
+  name: allow-egress-for-jobs
+  namespace: default
+spec:
+  # This policy will apply to any pod that has the label 'app: mrm-execution-job'.
+  # We will add this label to our jobs in the next step.
+  workloadSelector:
+    labels:
+      app: mrm-execution-job
+  # This is the key part. It configures the egress (outbound) traffic rules.
+  egress:
+  - hosts:
+    # The "./*" is a special wildcard that means "allow connections to any
+    # service within the cluster".
+    - "./*"
+    # The "istio-system/*" allows connections to the core Istio components.
+    - "istio-system/*"
+  # This is the second key part. It tells Istio's egress gateway to allow
+  # traffic to ANY host on the public internet.
+  outboundTrafficPolicy:
+    mode: ALLOW_ANY
