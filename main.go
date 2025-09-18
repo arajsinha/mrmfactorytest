@@ -65,15 +65,15 @@ func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	ctx := context.Background()
 
-	// --- THIS IS THE CRITICAL LOGIC ---
-	// The application now has two distinct modes based on the --command flag.
+	// --- THIS IS THE ARCHITECTURAL FIX ---
+	// The application logic is now decoupled from the startup sequence.
 
 	if config.Command != "" {
 		// MODE 1: EXECUTION ENGINE (Running inside a Kubernetes Job)
-		// This is a one-shot execution. It does not start an HTTP server.
+		// This is a one-shot execution and does not start an HTTP server.
 		logger.Info("Starting in ONE-SHOT EXECUTION ENGINE mode.")
 
-		// It only needs a simple etcd client to report its status.
+		// This simplified startup is for the temporary job pods.
 		client, err := clientv3.New(clientv3.Config{Endpoints: []string{"http://mrm-cell-0.mrm-cell-internal:2379"}, DialTimeout: 15 * time.Second})
 		if err != nil {
 			logger.Error("FATAL: Job failed to connect to etcd", "error", err)
@@ -85,16 +85,14 @@ func main() {
 		server := NewServer(client, runner, logger, nil, config.ConfigFile, config.PluginsDir)
 		server.ExecuteFSM(config.Command)
 		logger.Info("One-shot job execution finished.")
+
 	} else {
 		// MODE 2: ORCHESTRATOR SERVICE (Running as a long-lived StatefulSet)
-		// This service's job is to run forever and handle API requests.
+		// This is the main service that handles API requests.
 		logger.Info("Starting in long-running ORCHESTRATOR SERVICE mode.")
 
-		// Full initialization for the long-running service
-		cfg, err := telemetry.LoadConfig("telemetry.yaml")
-		if err != nil {
-			slog.Error("Failed to load telemetry config", "error", err)
-		}
+		// 1. Initialize non-blocking components first.
+		cfg, _ := telemetry.LoadConfig("telemetry.yaml")
 		if cfg != nil {
 			shutdown, err := telemetry.Initialize(ctx, cfg)
 			if err != nil {
@@ -104,6 +102,34 @@ func main() {
 			}
 		}
 
+		// 2. Create a placeholder Server object. The real components will be added later.
+		appServer := &Server{logger: logger}
+
+		// 3. Start the HTTP server IMMEDIATELY. This makes the /health endpoint available.
+		startHTTPServer(config.HTTPPort, appServer)
+
+		// 4. Now, start the heavy, blocking initialization.
+		etcdConfig, err := initializeEtcd(config)
+		if err != nil {
+			logger.Error("FATAL: Failed to initialize etcd", "error", err)
+			os.Exit(1)
+		}
+		defer closeEtcdServer()
+
+		// 5. Create the final, shared etcd client for the running application.
+		client, err := clientv3.New(clientv3.Config{Endpoints: []string{fmt.Sprintf("http://%s:%d", etcdConfig.HostID, etcdConfig.ClientPort)}, DialTimeout: 5 * time.Second})
+		if err != nil {
+			logger.Error("FATAL: Failed to create shared etcd client", "error", err)
+			os.Exit(1)
+		}
+		defer client.Close()
+
+		// 6. Initialize secrets manager and sync secrets now that etcd might be available.
+		secretsManager, err := secrets.NewManager(logger)
+		if err != nil {
+			logger.Error("FATAL: Failed to init secrets manager", "error", err)
+			os.Exit(1)
+		}
 		encryptionKey := os.Getenv("ENCRYPTION_KEY")
 		if encryptionKey == "" {
 			logger.Error("FATAL: ENCRYPTION_KEY not set.")
@@ -114,31 +140,12 @@ func main() {
 			logger.Error("FATAL: Failed to init crypto service", "error", err)
 			os.Exit(1)
 		}
-		secretsManager, err := secrets.NewManager(logger)
-		if err != nil {
-			logger.Error("FATAL: Failed to init secrets manager", "error", err)
-			os.Exit(1)
-		}
-
-		etcdConfig, err := initializeEtcd(config)
-		if err != nil {
-			logger.Error("FATAL: Failed to initialize etcd", "error", err)
-			os.Exit(1)
-		}
-		defer closeEtcdServer()
-
-		client, err := clientv3.New(clientv3.Config{Endpoints: []string{fmt.Sprintf("http://%s:%d", etcdConfig.HostID, etcdConfig.ClientPort)}, DialTimeout: 5 * time.Second})
-		if err != nil {
-			logger.Error("FATAL: Failed to create shared etcd client", "error", err)
-			os.Exit(1)
-		}
-		defer client.Close()
-
 		if err := syncSecrets(ctx, logger, secretsManager, cryptoService, client, config.ConfigFile); err != nil {
 			logger.Error("FATAL: Failed to sync secrets", "error", err)
 			os.Exit(1)
 		}
 
+		// 7. Initialize Kubernetes client for orchestration.
 		kubeConfig, err := rest.InClusterConfig()
 		if err != nil {
 			logger.Error("FATAL: Failed to get in-cluster Kubernetes config", "error", err)
@@ -150,19 +157,21 @@ func main() {
 			os.Exit(1)
 		}
 
-		runner := taskrunner.NewRunner(logger, 10, config.Command, config.PluginsDir)
-		appServer := NewServer(client, runner, logger, kubeClient, config.ConfigFile, config.PluginsDir)
+		// 8. Populate the appServer with the real components.
+		appServer.etcdClient = client
+		appServer.runner = taskrunner.NewRunner(logger, 10, config.Command, config.PluginsDir)
+		appServer.kubeClient = kubeClient
 
+		// 9. Start the background cluster monitor.
 		clusterMonitor := cluster.NewMonitor(client, logger, config.NodeID)
 		clusterMonitor.Start(context.Background())
-		startHTTPServer(config.HTTPPort, appServer)
 
 		logger.Info("Orchestrator service fully initialized and ready.")
 		waitForShutdown()
 	}
 }
 
-// ... (The rest of the file is unchanged from our last complete version) ...
+// ... (The rest of the file is unchanged) ...
 func (s *Server) OrchestrateExecution(configRepoURL string, command string) error {
 	s.logger.Info("Received new orchestration request", "repo", configRepoURL, "command", command)
 	jobName := fmt.Sprintf("mrm-exec-%d", time.Now().UnixNano())
