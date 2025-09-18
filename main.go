@@ -176,13 +176,18 @@ func (s *Server) OrchestrateExecution(configRepoURL string, command string) erro
 	s.logger.Info("Received new orchestration request", "repo", configRepoURL, "command", command)
 
 	jobName := fmt.Sprintf("mrm-exec-%d", time.Now().UnixNano())
-	
+
 	// --- THIS IS THE FIX ---
+	// This logic correctly parses the HTTPS URL and constructs the final clone command.
+	// It assumes the user provides a standard HTTPS URL.
+
+	// Example: https://github.com/arajsinha/mrm-user-a.git -> github.com/arajsinha/mrm-user-a.git
+	repoPath := strings.TrimPrefix(configRepoURL, "https://")
+
 	job := &batchv1.Job{
-		ObjectMeta: metav1.ObjectMeta{ Name: jobName, Namespace: "default" },
+		ObjectMeta: metav1.ObjectMeta{Name: jobName, Namespace: "default"},
 		Spec: batchv1.JobSpec{
 			Template: corev1.PodTemplateSpec{
-				// Add the label so our new Sidecar policy will apply to this pod.
 				ObjectMeta: metav1.ObjectMeta{
 					Labels: map[string]string{"app": "mrm-execution-job"},
 				},
@@ -195,7 +200,7 @@ func (s *Server) OrchestrateExecution(configRepoURL string, command string) erro
 							Name:  "git-cloner",
 							Image: "alpine/git",
 							// Corrected the command to use the right variable names ('username' and 'token').
-							Command: []string{"sh", "-c", fmt.Sprintf("git clone https://$(username):$(token)@%s /workspace", strings.TrimPrefix(configRepoURL, "https://"))},
+							Command: []string{"sh", "-c", fmt.Sprintf("git clone https://$(username):$(token)@%s /workspace", repoPath)},
 							EnvFrom: []corev1.EnvFromSource{
 								{SecretRef: &corev1.SecretEnvSource{LocalObjectReference: corev1.LocalObjectReference{Name: "github-credentials"}}},
 							},
@@ -206,11 +211,11 @@ func (s *Server) OrchestrateExecution(configRepoURL string, command string) erro
 					},
 					Containers: []corev1.Container{
 						{
-							Name:  "mrm-cell-engine",
-							Image: "arajsinha/mrm-cell-factory:latest",
-							Command: []string{ "./mrm-cell", "--config-file=/workspace/fsm-config.yaml", "--plugins-dir=/app/plugins", fmt.Sprintf("--command=%s", command), },
-							VolumeMounts: []corev1.VolumeMount{ {Name: "workspace", MountPath: "/workspace"}, },
-							EnvFrom: []corev1.EnvFromSource{ {SecretRef: &corev1.SecretEnvSource{LocalObjectReference: corev1.LocalObjectReference{Name: "mrm-cell-secrets"}}}, },
+							Name:         "mrm-cell-engine",
+							Image:        "arajsinha/mrm-cell-factory:latest",
+							Command:      []string{"./mrm-cell", "--config-file=/workspace/fsm-config.yaml", "--plugins-dir=/app/plugins", fmt.Sprintf("--command=%s", command)},
+							VolumeMounts: []corev1.VolumeMount{{Name: "workspace", MountPath: "/workspace"}},
+							EnvFrom:      []corev1.EnvFromSource{{SecretRef: &corev1.SecretEnvSource{LocalObjectReference: corev1.LocalObjectReference{Name: "mrm-cell-secrets"}}}},
 						},
 					},
 					RestartPolicy: "Never",
