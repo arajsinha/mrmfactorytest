@@ -18,3 +18,5 @@ run_deploy_*.sh
 .DS_Store
 user_deploy_key
 user_deploy_key.pub
+user_a_deploy_key
+user_a_deploy_key.pub
