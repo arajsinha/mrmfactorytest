@@ -128,13 +128,12 @@ func main() {
 // OrchestrateExecution creates a sandboxed Kubernetes Job to run a user's workflow.
 // in main.go
 
+// in main.go
+
 func (s *Server) OrchestrateExecution(configRepoURL string, command string) error {
 	s.logger.Info("Received new orchestration request", "repo", configRepoURL, "command", command)
 
 	jobName := fmt.Sprintf("mrm-exec-%d", time.Now().UnixNano())
-	
-	// --- THIS IS THE FIX ---
-	// We now construct an HTTPS clone URL and inject the credentials as environment variables.
 	
 	// Example: https://github.com/arajsinha/mrm-user-a.git -> github.com/arajsinha/mrm-user-a.git
 	repoPath := strings.TrimPrefix(configRepoURL, "https://")
@@ -143,9 +142,12 @@ func (s *Server) OrchestrateExecution(configRepoURL string, command string) erro
 		ObjectMeta: metav1.ObjectMeta{ Name: jobName, Namespace: "default" },
 		Spec: batchv1.JobSpec{
 			Template: corev1.PodTemplateSpec{
+				// --- THIS IS THE FIX ---
+				// Add the label so our new Sidecar policy will apply to this pod.
 				ObjectMeta: metav1.ObjectMeta{
 					Labels: map[string]string{"app": "mrm-execution-job"},
 				},
+				// --- END OF FIX ---
 				Spec: corev1.PodSpec{
 					Volumes: []corev1.Volume{
 						{Name: "workspace", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
@@ -154,7 +156,6 @@ func (s *Server) OrchestrateExecution(configRepoURL string, command string) erro
 						{
 							Name:  "git-cloner",
 							Image: "alpine/git",
-							// Corrected the command to use the right variable names ('username' and 'token').
 							Command: []string{"sh", "-c", fmt.Sprintf("git clone https://$(username):$(token)@%s /workspace", repoPath)},
 							EnvFrom: []corev1.EnvFromSource{
 								{SecretRef: &corev1.SecretEnvSource{LocalObjectReference: corev1.LocalObjectReference{Name: "github-credentials"}}},
@@ -179,7 +180,6 @@ func (s *Server) OrchestrateExecution(configRepoURL string, command string) erro
 			BackoffLimit: &[]int32{0}[0],
 		},
 	}
-	// --- END OF FIX ---
 
 	s.logger.Info("Creating new Kubernetes Job for execution", "jobName", jobName)
 	_, err := s.kubeClient.BatchV1().Jobs("default").Create(context.TODO(), job, metav1.CreateOptions{})
