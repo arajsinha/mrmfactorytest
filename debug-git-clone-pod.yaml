@@ -1,0 +1,42 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: git-clone-debugger
+spec:
+  # This section defines the volumes, including our git-deploy-key secret.
+  volumes:
+  - name: workspace
+    emptyDir: {}
+  - name: git-secret-volume
+    secret:
+      secretName: git-deploy-key # The SSH key for cloning private repos
+      defaultMode: 0400
+
+  # This is the initContainer that we are testing.
+  initContainers:
+  - name: git-cloner
+    image: alpine/git # This image includes git and ssh
+    # This is the exact command from our main.go file.
+    command: ["git", "clone", "git@github.com:arajsinha/mrm-user-a.git", "/workspace"]
+    # We inject the GIT_SSH_COMMAND to make git use our key non-interactively.
+    env:
+    - name: GIT_SSH_COMMAND
+      value: "ssh -i /etc/git-secret/ssh-privatekey -o IdentitiesOnly=yes -o StrictHostKeyChecking=no"
+    # Mount the shared folder and the git secret.
+    volumeMounts:
+    - name: workspace
+      mountPath: /workspace
+    - name: git-secret-volume
+      mountPath: /etc/git-secret
+      readOnly: true
+  
+  # --- THIS IS THE CRITICAL PART ---
+  # The main container just sleeps. This ensures that even if the initContainer fails,
+  # the pod will stay alive long enough for us to get the logs.
+  containers:
+  - name: sleeper
+    image: alpine:latest
+    command: ["sleep", "3600"]
+  
+  # This ensures the pod doesn't try to restart.
+  restartPolicy: Never

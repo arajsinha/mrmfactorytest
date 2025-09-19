@@ -126,15 +126,18 @@ func main() {
 }
 
 // OrchestrateExecution creates a sandboxed Kubernetes Job to run a user's workflow.
+// in main.go
+
 func (s *Server) OrchestrateExecution(configRepoURL string, command string) error {
 	s.logger.Info("Received new orchestration request", "repo", configRepoURL, "command", command)
-	jobName := fmt.Sprintf("mrm-exec-%d", time.Now().UnixNano())
 
+	jobName := fmt.Sprintf("mrm-exec-%d", time.Now().UnixNano())
+	
 	// --- THIS IS THE FIX ---
-	// This command string configures SSH to use our deploy key and to automatically
-	// accept GitHub's host key, preventing the interactive prompt.
-	gitSSHCommand := "ssh -i /etc/git-secret/ssh-privatekey -o IdentitiesOnly=yes -o StrictHostKeyChecking=no"
-	// --- END OF FIX ---
+	// We now construct an HTTPS clone URL and inject the credentials as environment variables.
+	
+	// Example: https://github.com/arajsinha/mrm-user-a.git -> github.com/arajsinha/mrm-user-a.git
+	repoPath := strings.TrimPrefix(configRepoURL, "https://")
 
 	job := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{ Name: jobName, Namespace: "default" },
@@ -146,20 +149,18 @@ func (s *Server) OrchestrateExecution(configRepoURL string, command string) erro
 				Spec: corev1.PodSpec{
 					Volumes: []corev1.Volume{
 						{Name: "workspace", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
-						{Name: "git-secret-volume", VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{SecretName: "git-deploy-key", DefaultMode: &[]int32{0400}[0]}}},
 					},
 					InitContainers: []corev1.Container{
 						{
 							Name:  "git-cloner",
-							Image: "alpine/git", // This image includes git and ssh
-							Command: []string{"git", "clone", configRepoURL, "/workspace"},
-							// We inject the GIT_SSH_COMMAND to make git use our key and skip the host check.
-							Env: []corev1.EnvVar{
-								{Name: "GIT_SSH_COMMAND", Value: gitSSHCommand},
+							Image: "alpine/git",
+							// Corrected the command to use the right variable names ('username' and 'token').
+							Command: []string{"sh", "-c", fmt.Sprintf("git clone https://$(username):$(token)@%s /workspace", repoPath)},
+							EnvFrom: []corev1.EnvFromSource{
+								{SecretRef: &corev1.SecretEnvSource{LocalObjectReference: corev1.LocalObjectReference{Name: "github-credentials"}}},
 							},
 							VolumeMounts: []corev1.VolumeMount{
 								{Name: "workspace", MountPath: "/workspace"},
-								{Name: "git-secret-volume", MountPath: "/etc/git-secret", ReadOnly: true},
 							},
 						},
 					},
@@ -178,6 +179,7 @@ func (s *Server) OrchestrateExecution(configRepoURL string, command string) erro
 			BackoffLimit: &[]int32{0}[0],
 		},
 	}
+	// --- END OF FIX ---
 
 	s.logger.Info("Creating new Kubernetes Job for execution", "jobName", jobName)
 	_, err := s.kubeClient.BatchV1().Jobs("default").Create(context.TODO(), job, metav1.CreateOptions{})
