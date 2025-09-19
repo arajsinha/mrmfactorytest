@@ -130,9 +130,11 @@ func (s *Server) OrchestrateExecution(configRepoURL string, command string) erro
 	s.logger.Info("Received new orchestration request", "repo", configRepoURL, "command", command)
 	jobName := fmt.Sprintf("mrm-exec-%d", time.Now().UnixNano())
 
+	// --- THIS IS THE FIX ---
 	// This command string configures SSH to use our deploy key and to automatically
-	// accept GitHub's host key, preventing the interactive "Are you sure?" prompt.
+	// accept GitHub's host key, preventing the interactive prompt.
 	gitSSHCommand := "ssh -i /etc/git-secret/ssh-privatekey -o IdentitiesOnly=yes -o StrictHostKeyChecking=no"
+	// --- END OF FIX ---
 
 	job := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{ Name: jobName, Namespace: "default" },
@@ -151,7 +153,7 @@ func (s *Server) OrchestrateExecution(configRepoURL string, command string) erro
 							Name:  "git-cloner",
 							Image: "alpine/git", // This image includes git and ssh
 							Command: []string{"git", "clone", configRepoURL, "/workspace"},
-							// We inject the GIT_SSH_COMMAND to make git use our key non-interactively.
+							// We inject the GIT_SSH_COMMAND to make git use our key and skip the host check.
 							Env: []corev1.EnvVar{
 								{Name: "GIT_SSH_COMMAND", Value: gitSSHCommand},
 							},
