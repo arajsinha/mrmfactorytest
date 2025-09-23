@@ -1,0 +1,78 @@
+# This ServiceAccount gives our service a unique identity within the cluster.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: config-sync-sa
+  namespace: gitea # We'll run this service in the same namespace as Gitea
+
+---
+# This Role defines the exact permissions our service needs: the ability to
+# create, get, list, and update ConfigMaps.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: configmap-manager-role
+  namespace: gitea
+rules:
+- apiGroups: [""] # The empty string "" refers to the core API group
+  resources: ["configmaps"]
+  verbs: ["create", "get", "list", "patch", "update"]
+
+---
+# This RoleBinding grants the permissions from the Role above to our ServiceAccount.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: bind-configmap-manager-to-sa
+  namespace: gitea
+subjects:
+- kind: ServiceAccount
+  name: config-sync-sa
+  namespace: gitea
+roleRef:
+  kind: Role
+  name: configmap-manager-role
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# This Service gives our deployment a stable internal DNS name so that
+# Gitea's webhook can find it.
+apiVersion: v1
+kind: Service
+metadata:
+  name: config-sync-service
+  namespace: gitea
+spec:
+  selector:
+    app: config-sync
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 8080
+
+---
+# This Deployment runs our Config Sync Service application.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: config-sync-deployment
+  namespace: gitea
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: config-sync
+  template:
+    metadata:
+      labels:
+        app: config-sync
+    spec:
+      # We tell the pod to use the ServiceAccount that has the permissions.
+      serviceAccountName: config-sync-sa
+      containers:
+      - name: server
+        # Use the new image we defined in the GitHub Actions workflow
+        image: arajsinha/mrm-config-sync-service:latest
+        ports:
+        - containerPort: 8080
+

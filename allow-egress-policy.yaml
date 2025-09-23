@@ -1,0 +1,30 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-egress-for-mrm-jobs
+  namespace: default
+spec:
+  # This policy applies to any pod with the 'app: mrm-execution-job' label.
+  podSelector:
+    matchLabels:
+      app: mrm-execution-job
+  # This section defines the types of traffic this policy affects.
+  policyTypes:
+  - Egress  # This is an outbound (outgoing) traffic rule.
+  
+  # This is the list of allowed egress rules.
+  egress:
+  # Rule 1: Allow all outgoing traffic to any IP address on the internet.
+  # This is a broad rule, but necessary for reaching public services like GitHub.
+  # In a highly secure production environment, you might restrict this to specific IP ranges.
+  - to:
+    - ipBlock:
+        cidr: 0.0.0.0/0
+  
+  # Rule 2: Allow DNS requests.
+  # This is CRITICAL. Without this, the pod cannot look up the IP address for 'github.com'.
+  - to:
+    - namespaceSelector: {}
+    ports:
+    - protocol: UDP
+      port: 53

@@ -1,0 +1,39 @@
+# This is the native Istio Gateway resource. It tells the main Kyma entry point
+# (the Istio ingress gateway) to open a port and listen for traffic for our Gitea host.
+apiVersion: networking.istio.io/v1alpha3
+kind: Gateway
+metadata:
+  name: gitea-gateway
+  # This must be in the 'gitea' namespace where the service is running.
+  namespace: gitea 
+spec:
+  # This selector links this Gateway to the default, public-facing load balancer in Kyma.
+  selector:
+    istio: ingressgateway
+  servers:
+  - port:
+      number: 80
+      name: http
+      protocol: HTTP
+    hosts:
+    - "gitea.c9ff5e0.kyma.ondemand.com"
+---
+# This is the native Istio VirtualService. This is the core routing rule.
+# It tells the Gateway what to do with the traffic it receives.
+apiVersion: networking.istio.io/v1alpha3
+kind: VirtualService
+metadata:
+  name: gitea-virtualservice
+  namespace: gitea
+spec:
+  hosts:
+  - "gitea.c9ff5e0.kyma.ondemand.com"
+  gateways:
+  - gitea-gateway # This links the VirtualService to the Gateway we defined above.
+  http:
+  - route:
+    - destination:
+        # This is the internal Kubernetes address of the Gitea service created by Helm.
+        host: gitea-http.gitea.svc.cluster.local
+        port:
+          number: 3000 # This is Gitea's internal service port.

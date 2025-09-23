@@ -1,51 +1,40 @@
-# Name of the GitHub Actions workflow. This will be displayed in the "Actions" tab.
-name: Build and Publish Docker Image to Docker Hub
+name: Build and Publish Docker Images
 
-# This section defines when the workflow will run.
-# It's configured to trigger automatically on every push to the 'main' branch.
 on:
   push:
     branches: [ "main" ]
 
-# A workflow run is made up of one or more jobs that can run sequentially or in parallel.
 jobs:
   build-and-push:
-    # The type of virtual machine to run the job on. 'ubuntu-latest' is the standard.
     runs-on: ubuntu-latest
-    
-    # This section is not strictly required but is good practice.
-    # It defines the permissions the GITHUB_TOKEN will have for this job.
     permissions:
-      contents: read # Allows the job to check out the repository's code.
+      contents: read
+      packages: write
 
     steps:
-      # Step 1: Check out your repository's code
-      # This downloads your source code (including the Dockerfile) onto the runner.
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # Step 2: Log in to Docker Hub
-      # This step securely authenticates the runner with Docker Hub.
-      # It uses the secrets you will create in your GitHub repository settings.
       - name: Log in to Docker Hub
         uses: docker/login-action@v3
         with:
-          # Your Docker Hub username, securely fetched from GitHub secrets.
           username: ${{ secrets.DOCKERHUB_USERNAME }}
-          # Your Docker Hub Access Token, securely fetched from GitHub secrets.
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          password: ${{ secrets.DOCKHUB_TOKEN }}
 
-      # Step 3: Build the Docker image and push it to your Docker Hub repository
-      # This is the main step that builds and publishes your application.
-      - name: Build and push Docker image
+      # --- Job 1: Build and push the main MRM Cell image ---
+      - name: Build and push MRM Cell image
         uses: docker/build-push-action@v5
         with:
-          # The 'context: .' tells Docker to use the repository root as the build context,
-          # which is where your Dockerfile is located.
           context: .
-          # The 'push: true' flag tells the action to upload the image after building.
           push: true
-          # The 'tags' field defines the name and tag for your image.
-          # It must be in the format: <your-dockerhub-username>/<your-repo-name>:latest
-          # IMPORTANT: Replace 'arajsinha' below with your actual Docker Hub username.
           tags: arajsinha/mrm-cell-factory:latest
+
+      # --- Job 2 (NEW): Build and push the Config Sync Service image ---
+      - name: Build and push Config Sync Service image
+        uses: docker/build-push-action@v5
+        with:
+          # Tell the builder to look inside the 'config-sync-service' directory
+          context: ./config-sync-service
+          push: true
+          # Give this image its own unique name
+          tags: arajsinha/mrm-config-sync-service:latest

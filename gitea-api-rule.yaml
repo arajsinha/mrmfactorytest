@@ -1,0 +1,17 @@
+# We are now using the v1beta1 API version, which is compatible with your Kyma cluster.
+apiVersion: gateway.kyma-project.io/v1beta1
+kind: APIRule
+metadata:
+  name: gitea-public-rule
+  namespace: gitea # This must be in the same namespace as the Gitea service
+spec:
+  gateway: kyma-gateway.kyma-system.svc.cluster.local
+  host: gitea.c9ff5e0.kyma.ondemand.com
+  service:
+    name: gitea-http # The name of the internal service created by Helm
+    port: 3000 # The port on that service to connect to
+  rules:
+    - path: /.*
+      methods: ["GET", "POST", "PUT", "DELETE"]
+      accessStrategies:
+        - handler: allow

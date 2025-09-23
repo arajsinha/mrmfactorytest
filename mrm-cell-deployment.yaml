@@ -41,12 +41,8 @@ spec:
     metadata:
       labels:
         app: mrm-cell
-      # --- THIS IS THE FIX ---
-      # This annotation tells the Istio sidecar to intelligently handle
-      # the Kubernetes readiness probe so it doesn't get blocked.
       annotations:
         sidecar.istio.io/rewriteAppHTTPProbers: "true"
-      # --- END OF FIX ---
     spec:
       containers:
       - name: mrm-cell-container
@@ -62,9 +58,15 @@ spec:
           initialDelaySeconds: 15
           periodSeconds: 10
           failureThreshold: 3
+        
+        # --- THIS IS THE FIX ---
+        # This block explicitly tells the container to load all key-value
+        # pairs from the 'mrm-cell-secrets' Secret as environment variables.
         envFrom:
         - secretRef:
             name: mrm-cell-secrets
+        # --- END OF FIX ---
+
         env:
           - name: POD_NAME
             valueFrom:

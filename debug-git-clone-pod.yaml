@@ -1,15 +1,16 @@
 apiVersion: v1
 kind: Pod
 metadata:
-  name: git-clone-debugger-https
+  name: git-clone-debugger
 spec:
+  # This section defines the volumes, including our github-credentials secret.
   volumes:
   - name: workspace
     emptyDir: {}
 
-  # This is the initContainer we are testing.
+  # This is the initContainer that we are testing.
   initContainers:
-  - name: git-cloner-https
+  - name: git-cloner
     image: alpine/git # This image includes git
     # This is the new, corrected command from our main.go fix.
     command: ["sh", "-c", "git clone https://$(username):$(token)@github.com/arajsinha/mrm-user-a.git /workspace"]
@@ -21,10 +22,13 @@ spec:
     - name: workspace
       mountPath: /workspace
   
-  # The main container just sleeps to keep the pod alive for inspection.
+  # --- THIS IS THE CRITICAL PART ---
+  # The main container just sleeps. This ensures that even if the initContainer fails,
+  # the pod will stay alive long enough for us to get the logs.
   containers:
   - name: sleeper
     image: alpine:latest
     command: ["sleep", "3600"]
   
+  # This ensures the pod doesn't try to restart.
   restartPolicy: Never
