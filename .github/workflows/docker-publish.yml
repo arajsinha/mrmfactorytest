@@ -19,7 +19,7 @@ jobs:
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKHUB_TOKEN }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       # --- Job 1: Build and push the main MRM Cell image ---
       - name: Build and push MRM Cell image
