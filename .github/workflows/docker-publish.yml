@@ -21,7 +21,7 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      # --- Job 1: Build and push the main MRM Cell image ---
+      # Job 1: Build and push the main MRM Cell image (This part is unchanged and correct)
       - name: Build and push MRM Cell image
         uses: docker/build-push-action@v5
         with:
@@ -29,12 +29,16 @@ jobs:
           push: true
           tags: arajsinha/mrm-cell-factory:latest
 
-      # --- Job 2 (NEW): Build and push the Config Sync Service image ---
+      # --- THIS IS THE FIX ---
+      # Job 2: Build and push the Config Sync Service image
       - name: Build and push Config Sync Service image
         uses: docker/build-push-action@v5
         with:
-          # Tell the builder to look inside the 'config-sync-service' directory
-          context: ./config-sync-service
+          # Use the repository root as the build context.
+          context: .
+          # Explicitly point to the Dockerfile inside the service's directory.
+          file: ./config-sync-service/Dockerfile
           push: true
-          # Give this image its own unique name
+          # Give this image its own unique name.
           tags: arajsinha/mrm-config-sync-service:latest
+      # --- END OF FIX ---
