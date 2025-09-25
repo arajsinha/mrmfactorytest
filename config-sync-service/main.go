@@ -13,7 +13,6 @@ import (
 )
 
 // GiteaWebhookPayload defines the structure of the incoming webhook from Gitea.
-// We only care about the repository's name and its clone URL.
 type GiteaWebhookPayload struct {
 	Repository struct {
 		Name     string `json:"name"`
@@ -25,7 +24,6 @@ type GiteaWebhookPayload struct {
 func handleWebhook(w http.ResponseWriter, r *http.Request) {
 	log.Println("Received a webhook from Gitea...")
 
-	// 1. Parse the incoming webhook payload.
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		log.Printf("Error reading request body: %v", err)
@@ -48,7 +46,12 @@ func handleWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 2. Create a temporary directory and clone the user's repository.
+	// --- THIS IS THE FIX ---
+	// The clone_url from the webhook is a public URL. We must replace it with
+	// the internal Kubernetes service DNS name for Gitea, which is more reliable.
+	internalCloneURL := strings.Replace(cloneURL, "gitea.c9ff5e0.kyma.ondemand.com", "gitea-http.gitea.svc.cluster.local:3000", 1)
+	// --- END OF FIX ---
+
 	tmpDir, err := os.MkdirTemp("", "config-sync-")
 	if err != nil {
 		log.Printf("Error creating temp directory: %v", err)
@@ -57,26 +60,21 @@ func handleWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 	defer os.RemoveAll(tmpDir)
 
-	// IMPORTANT: We must use the internal Kubernetes DNS name for the Gitea service.
-	internalCloneURL := strings.Replace(cloneURL, "gitea.c9ff5e0.kyma.ondemand.com", "gitea-http.gitea.svc.cluster.local:3000", 1)
-
-	log.Printf("Cloning repository '%s' from '%s' into '%s'", repoName, internalCloneURL, tmpDir)
+	log.Printf("Cloning repository '%s' from internal URL '%s' into '%s'", repoName, internalCloneURL, tmpDir)
 	cmdClone := exec.Command("git", "clone", internalCloneURL, tmpDir)
 	if output, err := cmdClone.CombinedOutput(); err != nil {
 		log.Printf("Error cloning repository: %v\nOutput: %s", err, string(output))
-		http.Error(w, "Error cloning repository", http.StatusInternalServerError)
+		http.Error(w, "Error cloning repository", http.StatusInternalServerError) // Respond with 500
 		return
 	}
 
-	// 3. Create or update the Kubernetes ConfigMap from the file.
 	configFilePath := filepath.Join(tmpDir, "fsm-config.yaml")
-	configMapName := fmt.Sprintf("%s-config", repoName) // e.g., "workflow-config-config"
+	configMapName := fmt.Sprintf("%s-config", repoName)
 
 	log.Printf("Creating/updating ConfigMap '%s' from file '%s'", configMapName, configFilePath)
 	
-	// This robust command creates the ConfigMap if it doesn't exist, or updates it if it does.
 	cmdKubectl := exec.Command("sh", "-c",
-		fmt.Sprintf("kubectl create configmap %s --from-file=%s --dry-run=client -o yaml | kubectl apply -f -", configMapName, configFilePath),
+		fmt.Sprintf("kubectl create configmap %s --from-file=%s --dry-run=client -o yaml | kubectl apply -f - -n gitea", configMapName, configFilePath),
 	)
 	if output, err := cmdKubectl.CombinedOutput(); err != nil {
 		log.Printf("Error applying ConfigMap: %v\nOutput: %s", err, string(output))

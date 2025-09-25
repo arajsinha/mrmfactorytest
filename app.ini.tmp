@@ -1,0 +1,50 @@
+WORK_PATH = /data
+
+[indexer]
+ISSUE_INDEXER_TYPE = db
+
+[server]
+LFS_JWT_SECRET = xTVJ-rN5OPZmgdOAnTj_EVeMu5BR0fvzymWcao6PZXA
+ROOT_URL = http://gitea.c9ff5e0.kyma.ondemand.com/
+ENABLE_PPROF = false
+SSH_PORT = 22
+APP_DATA_PATH = /data
+SSH_LISTEN_PORT = 2222
+PROTOCOL = http
+HTTP_PORT = 3000
+START_SSH_SERVER = true
+SSH_DOMAIN = gitea.c9ff5e0.kyma.ondemand.com
+DOMAIN = gitea.c9ff5e0.kyma.ondemand.com
+
+[database]
+NAME = gitea
+DB_TYPE = postgres
+HOST = gitea-postgresql-ha-pgpool.gitea.svc.cluster.local:5432
+USER = gitea
+PASSWD = gitea
+
+[session]
+PROVIDER_CONFIG = redis+cluster://:@gitea-valkey-cluster-headless.gitea.svc.cluster.local:6379/0?pool_size=100&idle_timeout=180s&
+PROVIDER = redis
+
+[repository]
+ROOT = /data/git/gitea-repositories
+
+[cache]
+HOST = redis+cluster://:@gitea-valkey-cluster-headless.gitea.svc.cluster.local:6379/0?pool_size=100&idle_timeout=180s&
+ADAPTER = redis
+
+[security]
+INTERNAL_TOKEN = eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJuYmYiOjE3NTg2MDc3Mjl9.R7Z94ij6RvJ4RnqIE8x6VDVZy2nc5Pd9vBi71CiJzNc
+SECRET_KEY = VCj0fLdsqvUqrh8pOTwz9ioxfgIyNBXt9P3mVq7v8e5jN78B3nVhOeXFSvAlwvxE
+INSTALL_LOCK = true
+
+[queue]
+TYPE = redis
+CONN_STR = redis+cluster://:@gitea-valkey-cluster-headless.gitea.svc.cluster.local:6379/0?pool_size=100&idle_timeout=180s&
+
+[metrics]
+ENABLED = false
+
+[oauth2]
+JWT_SECRET = jJk91545XLV4sS4CEg7qOWStlA7zmWTZyGcIKzKWRfg
