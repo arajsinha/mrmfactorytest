@@ -153,12 +153,12 @@ func main() {
 func (s *Server) OrchestrateExecution(configRepoURL string, command string) error {
 	s.logger.Info("Received new orchestration request", "repo", configRepoURL, "command", command)
 	jobName := fmt.Sprintf("mrm-exec-%d", time.Now().UnixNano())
-	
+
 	// This logic correctly parses the user-provided HTTPS URL and constructs the final clone command.
 	repoPath := strings.TrimPrefix(configRepoURL, "https://")
 
 	job := &batchv1.Job{
-		ObjectMeta: metav1.ObjectMeta{ Name: jobName, Namespace: "default" },
+		ObjectMeta: metav1.ObjectMeta{Name: jobName, Namespace: "default"},
 		Spec: batchv1.JobSpec{
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{
@@ -185,11 +185,11 @@ func (s *Server) OrchestrateExecution(configRepoURL string, command string) erro
 					},
 					Containers: []corev1.Container{
 						{
-							Name:  "mrm-cell-engine",
-							Image: "arajsinha/mrm-cell-factory:latest",
-							Command: []string{ "./mrm-cell", "--config-file=/workspace/fsm-config.yaml", "--plugins-dir=/app/plugins", fmt.Sprintf("--command=%s", command), },
-							VolumeMounts: []corev1.VolumeMount{ {Name: "workspace", MountPath: "/workspace"}, },
-							EnvFrom: []corev1.EnvFromSource{ {SecretRef: &corev1.SecretEnvSource{LocalObjectReference: corev1.LocalObjectReference{Name: "mrm-cell-secrets"}}}, },
+							Name:         "mrm-cell-engine",
+							Image:        "arajsinha/mrm-cell-factory:latest",
+							Command:      []string{"./mrm-cell", "--config-file=/workspace/fsm-config.yaml", "--plugins-dir=/app/plugins", fmt.Sprintf("--command=%s", command)},
+							VolumeMounts: []corev1.VolumeMount{{Name: "workspace", MountPath: "/workspace"}},
+							EnvFrom:      []corev1.EnvFromSource{{SecretRef: &corev1.SecretEnvSource{LocalObjectReference: corev1.LocalObjectReference{Name: "mrm-cell-secrets"}}}},
 						},
 					},
 					RestartPolicy: "Never",
@@ -200,6 +200,130 @@ func (s *Server) OrchestrateExecution(configRepoURL string, command string) erro
 	}
 
 	s.logger.Info("Creating new Kubernetes Job for execution", "jobName", jobName)
+	_, err := s.kubeClient.BatchV1().Jobs("default").Create(context.TODO(), job, metav1.CreateOptions{})
+	if err != nil {
+		s.logger.Error("Failed to create Kubernetes Job", "error", err)
+		return err
+	}
+	s.logger.Info("Successfully launched new execution job", "jobName", jobName)
+	return nil
+}
+
+// OrchestrateExecutionFromRepo is the original function that clones a Git repo.
+func (s *Server) OrchestrateExecutionFromRepo(configRepo string, command string) error {
+	s.logger.Info("Received new orchestration request from Git repo", "repo", configRepo, "command", command)
+	jobName := fmt.Sprintf("mrm-exec-%d", time.Now().UnixNano())
+
+	job := &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      jobName,
+			Namespace: "default",
+			Labels:    map[string]string{"app": "mrm-execution-job"},
+		},
+		Spec: batchv1.JobSpec{
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{
+					Labels: map[string]string{"app": "mrm-execution-job"},
+				},
+				Spec: corev1.PodSpec{
+					Volumes: []corev1.Volume{
+						{Name: "repo-storage", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
+						{Name: "github-credentials", VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{SecretName: "github-credentials"}}},
+					},
+					InitContainers: []corev1.Container{
+						{
+							Name:  "git-cloner",
+							Image: "alpine/git:latest",
+							Command: []string{
+								"sh", "-c",
+								fmt.Sprintf("git clone %s /repo", configRepo),
+							},
+							VolumeMounts: []corev1.VolumeMount{
+								{Name: "repo-storage", MountPath: "/repo"},
+							},
+						},
+					},
+					Containers: []corev1.Container{
+						{
+							Name:  "mrm-cell-engine",
+							Image: "arajsinha/mrm-cell-factory:latest",
+							Command: []string{
+								"./mrm-cell",
+								"--config-file=/repo/fsm-config.yaml",
+								"--plugins-dir=/repo/plugins",
+								fmt.Sprintf("--command=%s", command),
+							},
+							VolumeMounts: []corev1.VolumeMount{
+								{Name: "repo-storage", MountPath: "/repo"},
+							},
+							EnvFrom: []corev1.EnvFromSource{
+								{SecretRef: &corev1.SecretEnvSource{LocalObjectReference: corev1.LocalObjectReference{Name: "mrm-cell-secrets"}}},
+							},
+						},
+					},
+					RestartPolicy: "Never",
+				},
+			},
+			BackoffLimit: &[]int32{0}[0],
+		},
+	}
+
+	s.logger.Info("Creating new Kubernetes Job for execution from Git repo", "jobName", jobName)
+	_, err := s.kubeClient.BatchV1().Jobs("default").Create(context.TODO(), job, metav1.CreateOptions{})
+	if err != nil {
+		s.logger.Error("Failed to create Kubernetes Job", "error", err)
+		return err
+	}
+	s.logger.Info("Successfully launched new execution job", "jobName", jobName)
+	return nil
+}
+
+// OrchestrateExecutionFromConfigMap is the new function that mounts a ConfigMap.
+func (s *Server) OrchestrateExecutionFromConfigMap(configMapName string, command string) error {
+	s.logger.Info("Received new orchestration request from ConfigMap", "configMap", configMapName, "command", command)
+	jobName := fmt.Sprintf("mrm-exec-%d", time.Now().UnixNano())
+
+	job := &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{Name: jobName, Namespace: "default"},
+		Spec: batchv1.JobSpec{
+			Template: corev1.PodTemplateSpec{
+				Spec: corev1.PodSpec{
+					Volumes: []corev1.Volume{
+						{
+							Name: "config-volume",
+							VolumeSource: corev1.VolumeSource{
+								ConfigMap: &corev1.ConfigMapVolumeSource{
+									LocalObjectReference: corev1.LocalObjectReference{Name: configMapName},
+								},
+							},
+						},
+					},
+					Containers: []corev1.Container{
+						{
+							Name:  "mrm-cell-engine",
+							Image: "arajsinha/mrm-cell-factory:latest",
+							Command: []string{
+								"./mrm-cell",
+								"--config-file=/etc/config/fsm-config.yaml",
+								"--plugins-dir=/app/plugins", // Assuming plugins are baked into the image now
+								fmt.Sprintf("--command=%s", command),
+							},
+							VolumeMounts: []corev1.VolumeMount{
+								{Name: "config-volume", MountPath: "/etc/config/fsm-config.yaml", SubPath: "fsm-config.yaml"},
+							},
+							EnvFrom: []corev1.EnvFromSource{
+								{SecretRef: &corev1.SecretEnvSource{LocalObjectReference: corev1.LocalObjectReference{Name: "mrm-cell-secrets"}}},
+							},
+						},
+					},
+					RestartPolicy: "Never",
+				},
+			},
+			BackoffLimit: &[]int32{0}[0],
+		},
+	}
+
+	s.logger.Info("Creating new Kubernetes Job for execution from ConfigMap", "jobName", jobName)
 	_, err := s.kubeClient.BatchV1().Jobs("default").Create(context.TODO(), job, metav1.CreateOptions{})
 	if err != nil {
 		s.logger.Error("Failed to create Kubernetes Job", "error", err)
