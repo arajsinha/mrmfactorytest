@@ -1,6 +1,8 @@
 # --- Stage 1: The Builder ---
 FROM golang:1.24-alpine AS builder
 
+
+ARG CACHE_BUSTER=1
 # --- THIS IS THE FIX ---
 # Install git (for go mod) AND build-base (for the C toolchain needed by plugins).
 # The 'build-base' package includes gcc, make, and other tools required for cgo.

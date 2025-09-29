@@ -28,6 +28,12 @@ jobs:
           context: .
           push: true
           tags: arajsinha/mrm-cell-factory:latest
+          # --- THIS IS THE FIX ---
+          # This passes a unique build argument on every run, forcing Docker
+          # to rebuild the image from scratch and ignore any stale cache.
+          build-args: |
+            CACHE_BUSTER=${{ github.run_id }}
+          # --- END OF FIX ---
 
       # --- THIS IS THE FIX ---
       # Job 2: Build and push the Config Sync Service image
