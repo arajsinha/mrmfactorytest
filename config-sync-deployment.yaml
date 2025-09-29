@@ -75,4 +75,10 @@ spec:
         image: arajsinha/mrm-config-sync-service:latest
         ports:
         - containerPort: 8080
+        # --- THIS IS THE FIX ---
+        # Inject the bot's credentials as environment variables.
+        envFrom:
+        - secretRef:
+            name: gitea-bot-credentials
+        # --- END OF FIX ---
 
