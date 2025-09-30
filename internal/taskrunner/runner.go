@@ -364,27 +364,22 @@ func (r *Runner) worker(
 
 // executePluginTask is the real implementation that loads and runs a .so plugin.
 func (r *Runner) executePluginTask(task config.Task, preparedContext map[string]interface{}) (interface{}, error) {
-	// Construct the full path to the plugin file.
 	pluginPath := filepath.Join(r.pluginsDir, task.Package)
-
 	p, err := plugin.Open(pluginPath)
 	if err != nil {
 		return nil, fmt.Errorf("task '%s': error loading plugin %s: %w", task.ID, task.Package, err)
 	}
 
-	// Look up the exported 'Execute' function within the plugin.
 	execSymbol, err := p.Lookup(task.Method)
 	if err != nil {
 		return nil, fmt.Errorf("task '%s': error looking up method '%s' in plugin %s: %w", task.ID, task.Method, task.Package, err)
 	}
 
-	// Assert that the symbol is of the correct function type.
 	executeFunc, ok := execSymbol.(func(map[string]interface{}) (interface{}, error))
 	if !ok {
 		return nil, fmt.Errorf("task '%s': method '%s' in plugin %s has incorrect signature", task.ID, task.Method, task.Package)
 	}
 
-	// Execute the plugin function.
 	return executeFunc(preparedContext)
 }
 
