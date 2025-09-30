@@ -20,7 +20,7 @@ RUN mkdir -p /app/plugins/plugins
 
 # 2. Compile each adaptor and place the .so file inside the nested directory.
 RUN (cd adaptors/cfplugin && go build -buildmode=plugin -o /app/plugins/plugins/cfplugin.so .)
-RUN (cd adaptors/dns-adaptor && go build -buildmode=plugin -o /app/plugins/plugins/dns-adaptor.so .)
+RUN (cd adaptors/dns-adaptor && go build -buildmode=plugin -o /app/plugins/plugins/dns-adaptor-route53.so .)
 RUN (cd adaptors/hana-adaptor && go build -buildmode=plugin -o /app/plugins/plugins/hana-adaptor.so .)
 # --- END OF FIX ---
 
