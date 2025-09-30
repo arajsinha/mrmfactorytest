@@ -32,11 +32,14 @@ const (
 // ExecutionHeader represents the overall status of a single execution run (EID).
 // This will be stored as a JSON object in the '/header' key.
 type ExecutionHeader struct {
-	Status    ExecutionStatus `json:"status"`
-	TargetState string          `json:"targetState"` // <-- ADDED
-	StartTime time.Time       `json:"startTime"`
-	EndTime   *time.Time      `json:"endTime,omitempty"` // Use a pointer to allow for null end time
-	Error     string          `json:"error,omitempty"`
+	SID          string          `json:"sid"`
+	EID          string          `json:"eid"`
+	Status       ExecutionStatus `json:"status"`
+	InitialState string          `json:"initialState"`
+	TargetState  string          `json:"targetState"`
+	Error        string          `json:"error,omitempty"`
+	StartTime    time.Time       `json:"startTime"`
+	EndTime      *time.Time      `json:"endTime,omitempty"`
 }
 
 // TaskDetail represents the detailed status and result of a single task.
