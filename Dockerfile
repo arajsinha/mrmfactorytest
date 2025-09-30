@@ -1,32 +1,30 @@
 # --- Stage 1: The Builder ---
 FROM golang:1.24-alpine AS builder
 
-
-ARG CACHE_BUSTER=1
-# --- THIS IS THE FIX ---
-# Install git (for go mod) AND build-base (for the C toolchain needed by plugins).
-# The 'build-base' package includes gcc, make, and other tools required for cgo.
+# Install git and the C build toolchain (for plugins)
 RUN apk --no-cache add git build-base
-# --- END OF FIX ---
 
-# Set the working directory inside the container.
+# Set the working directory
 WORKDIR /app
 
-# Copy the dependency files first to leverage Docker's build cache.
+# Copy and download dependencies
 COPY go.mod go.sum ./
 RUN go mod download
 
-# Copy the rest of the application source code.
+# Copy the rest of the source code
 COPY . .
 
-# Build all plugins (adaptors) from their source code.
-RUN mkdir -p /app/plugins
-RUN (cd adaptors/cfplugin && go build -buildmode=plugin -o /app/plugins/cfplugin.so .)
-RUN (cd adaptors/dns-adaptor-route53 && go build -buildmode=plugin -o /app/plugins/dns-adaptor-route53.so .)
-RUN (cd adaptors/hana-adaptor && go build -buildmode=plugin -o /app/plugins/hana-adaptor.so .)
+# --- THIS IS THE FIX ---
+# 1. Create the nested /app/plugins/plugins directory structure.
+RUN mkdir -p /app/plugins/plugins
 
-# Build the main application into a single, static binary.
-# RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o /app/mrm-cell .
+# 2. Compile each adaptor and place the .so file inside the nested directory.
+RUN (cd adaptors/cfplugin && go build -buildmode=plugin -o /app/plugins/plugins/cfplugin.so .)
+RUN (cd adaptors/dns-adaptor && go build -buildmode=plugin -o /app/plugins/plugins/dns-adaptor.so .)
+RUN (cd adaptors/hana-adaptor && go build -buildmode=plugin -o /app/plugins/plugins/hana-adaptor.so .)
+# --- END OF FIX ---
+
+# Build the main application
 RUN go build -a -installsuffix cgo -o /app/mrm-cell .
 
 
@@ -35,24 +33,19 @@ FROM golang:1.24-alpine
 
 WORKDIR /app
 
-# Install CA certificates, needed for making HTTPS requests.
-RUN apk --no-cache add ca-certificates
-
-# Copy the compiled application binary from the 'builder' stage.
+# Copy the compiled application binary from the 'builder' stage
 COPY --from=builder /app/mrm-cell .
 
-# Copy the fsm-config.yaml file.
+# Copy the config and telemetry files
 COPY fsm-config.yaml .
-
-# Copy the entire directory of compiled plugins from the builder stage.
-COPY --from=builder /app/plugins/ ./plugins/
-
 COPY telemetry.yaml .
 
-# Expose the ports that the application will listen on for documentation.
+# Copy the entire /app/plugins directory from the builder.
+# This will result in a /app/plugins/plugins structure in the final image.
+COPY --from=builder /app/plugins/ ./plugins/
+
+# Expose the necessary ports
 EXPOSE 9081 8082 8083 2379 2380 
 
-# The command that will be run when a container is started from this image.
-# CMD ["./mrm-cell"]
-
-CMD ["sleep", "3600"]
+# The command to run when a container is started
+CMD ["./mrm-cell"]

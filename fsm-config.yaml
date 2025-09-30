@@ -35,7 +35,7 @@ fsm:
       - state: SwitchingToA
         tasks:
           - id: dns_cname_a
-            package: dns-adaptor-route53.so
+            package: plugins/dns-adaptor-route53.so
             method: Execute
             outputVariable: dns_cname_aResult
             context:
@@ -48,7 +48,7 @@ fsm:
               accessKey: { "baoPath": "secret/data/scenarios/{{.ScenarioID}}/aws/route53", "key": "accessKey" }
               region: { "baoPath": "secret/data/scenarios/{{.ScenarioID}}/aws/route53", "key": "region" }
           - id: stop_approuter_secondary_a
-            package: cfplugin.so
+            package: plugins/cfplugin.so
             method: Execute
             outputVariable: stop_approuter_secondary_aResult
             context:
@@ -59,7 +59,7 @@ fsm:
               originPath: { "baoPath": "secret/data/scenarios/{{.ScenarioID}}/cf/secondary", "key": "origin" }
               usernamePath: { "baoPath": "secret/data/scenarios/{{.ScenarioID}}/cf/secondary", "key": "username" }
           - id: stop_srv_secondary_a
-            package: cfplugin.so
+            package: plugins/cfplugin.so
             method: Execute
             outputVariable: stop_srv_secondary_aResult
             context:
@@ -70,7 +70,7 @@ fsm:
               originPath: { "baoPath": "secret/data/scenarios/{{.ScenarioID}}/cf/secondary", "key": "origin" }
               usernamePath: { "baoPath": "secret/data/scenarios/{{.ScenarioID}}/cf/secondary", "key": "username" }
           - id: create_subs_primary_switch
-            package: hana-adaptor.so
+            package: plugins/hana-adaptor.so
             method: Execute
             outputVariable: create_subs_primary_switchResult
             dependencies: { tasks: [stop_srv_secondary_a, stop_approuter_secondary_a] }
@@ -80,7 +80,7 @@ fsm:
               targetSchema: '2DC652E3F0B04D1B960694179CA391D1'
               credentials: { "baoPath": "secret/data/scenarios/{{.ScenarioID}}/hana/primary", "key": "undefined" }
           - id: delete_subs_primary_verify
-            package: hana-adaptor.so
+            package: plugins/hana-adaptor.so
             method: Execute
             outputVariable: delete_subs_primary_verifyResult
             dependencies: { tasks: [create_subs_primary_switch] }
@@ -90,7 +90,7 @@ fsm:
               targetSchema: '2DC652E3F0B04D1B960694179CA391D1'
               credentials: { "baoPath": "secret/data/scenarios/{{.ScenarioID}}/hana/primary", "key": "undefined" }
           - id: recreate_subs_secondary_for_replication
-            package: hana-adaptor.so
+            package: plugins/hana-adaptor.so
             method: Execute
             outputVariable: recreate_subs_secondary_for_replicationResult
             dependencies: { tasks: [delete_subs_primary_verify] }
@@ -100,7 +100,7 @@ fsm:
               targetSchema: '858E8272F0B2422195E519423DE650CD'
               credentials: { "baoPath": "secret/data/scenarios/{{.ScenarioID}}/hana/secondary", "key": "undefined" }
           - id: start_srv_primary_switch
-            package: cfplugin.so
+            package: plugins/cfplugin.so
             method: Execute
             outputVariable: start_srv_primary_switchResult
             dependencies: { tasks: [recreate_subs_secondary_for_replication] }
@@ -112,7 +112,7 @@ fsm:
               originPath: { "baoPath": "secret/data/scenarios/{{.ScenarioID}}/cf/primary", "key": "origin" }
               usernamePath: { "baoPath": "secret/data/scenarios/{{.ScenarioID}}/cf/primary", "key": "username" }
           - id: start_approuter_primary_switch
-            package: cfplugin.so
+            package: plugins/cfplugin.so
             method: Execute
             outputVariable: start_approuter_primary_switchResult
             dependencies: { tasks: [start_srv_primary_switch] }
@@ -126,7 +126,7 @@ fsm:
       - state: SwitchingToB
         tasks:
           - id: dns_cname_b_switch
-            package: dns-adaptor-route53.so
+            package: plugins/dns-adaptor-route53.so
             method: Execute
             outputVariable: dns_cname_b_switchResult
             context:
@@ -139,7 +139,7 @@ fsm:
               accessKey: { "baoPath": "secret/data/scenarios/{{.ScenarioID}}/aws/route53", "key": "accessKey" }
               region: { "baoPath": "secret/data/scenarios/{{.ScenarioID}}/aws/route53", "key": "region" }
           - id: dns_a_b_switch
-            package: dns-adaptor-route53.so
+            package: plugins/dns-adaptor-route53.so
             method: Execute
             outputVariable: dns_a_b_switchResult
             dependencies: { tasks: [dns_cname_b_switch] }
@@ -153,7 +153,7 @@ fsm:
               accessKey: { "baoPath": "secret/data/scenarios/{{.ScenarioID}}/aws/route53", "key": "accessKey" }
               region: { "baoPath": "secret/data/scenarios/{{.ScenarioID}}/aws/route53", "key": "region" }
           - id: dns_srv_b_switch
-            package: dns-adaptor-route53.so
+            package: plugins/dns-adaptor-route53.so
             method: Execute
             outputVariable: dns_srv_b_switchResult
             dependencies: { tasks: [dns_a_b_switch] }
@@ -169,7 +169,7 @@ fsm:
               accessKey: { "baoPath": "secret/data/scenarios/{{.ScenarioID}}/aws/route53", "key": "accessKey" }
               region: { "baoPath": "secret/data/scenarios/{{.ScenarioID}}/aws/route53", "key": "region" }
           - id: stop_approuter_primary_b
-            package: cfplugin.so
+            package: plugins/cfplugin.so
             method: Execute
             outputVariable: stop_approuter_primary_bResult
             context:
@@ -180,7 +180,7 @@ fsm:
               originPath: { "baoPath": "secret/data/scenarios/{{.ScenarioID}}/cf/primary", "key": "origin" }
               usernamePath: { "baoPath": "secret/data/scenarios/{{.ScenarioID}}/cf/primary", "key": "username" }
           - id: stop_srv_primary_b
-            package: cfplugin.so
+            package: plugins/cfplugin.so
             method: Execute
             outputVariable: stop_srv_primary_bResult
             context:
@@ -191,7 +191,7 @@ fsm:
               originPath: { "baoPath": "secret/data/scenarios/{{.ScenarioID}}/cf/primary", "key": "origin" }
               usernamePath: { "baoPath": "secret/data/scenarios/{{.ScenarioID}}/cf/primary", "key": "username" }
           - id: del_remote_sub_secondary
-            package: hana-adaptor.so
+            package: plugins/hana-adaptor.so
             method: Execute
             outputVariable: del_remote_sub_secondaryResult
             dependencies: { tasks: [stop_approuter_primary_b, stop_srv_primary_b] }
@@ -201,7 +201,7 @@ fsm:
               targetSchema: '858E8272F0B2422195E519423DE650CD'
               credentials: { "baoPath": "secret/data/scenarios/{{.ScenarioID}}/hana/secondary", "key": "undefined" }
           - id: start_srv_switch_secondary
-            package: cfplugin.so
+            package: plugins/cfplugin.so
             method: Execute
             outputVariable: start_srv_switch_secondaryResult
             dependencies: { tasks: [del_remote_sub_secondary] }
@@ -213,7 +213,7 @@ fsm:
               originPath: { "baoPath": "secret/data/scenarios/{{.ScenarioID}}/cf/secondary", "key": "origin" }
               usernamePath: { "baoPath": "secret/data/scenarios/{{.ScenarioID}}/cf/secondary", "key": "username" }
           - id: stop_approuter_switch_secondary
-            package: cfplugin.so
+            package: plugins/cfplugin.so
             method: Execute
             outputVariable: stop_approuter_switch_secondaryResult
             dependencies: { tasks: [start_srv_switch_secondary] }
@@ -224,6 +224,3 @@ fsm:
               passwordPath: { "baoPath": "secret/data/scenarios/{{.ScenarioID}}/cf/secondary", "key": "password" }
               originPath: { "baoPath": "secret/data/scenarios/{{.ScenarioID}}/cf/secondary", "key": "origin" }
               usernamePath: { "baoPath": "secret/data/scenarios/{{.ScenarioID}}/cf/secondary", "key": "username" }
-
-
-              
