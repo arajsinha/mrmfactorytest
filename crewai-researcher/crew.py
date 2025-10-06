@@ -3,9 +3,19 @@ import json
 import os
 from crewai import Agent, Task, Crew, Process
 from crewai_tools import SerperDevTool
+from langchain_groq import ChatGroq # <-- 1. IMPORT ChatGroq
 
 # Get the research topic from the command-line argument
 topic = sys.argv[1]
+
+# --- THIS IS THE FIX ---
+# 2. Initialize the Groq LLM
+#    We are using the fast Llama 3 8B model.
+llm = ChatGroq(
+    api_key=os.environ.get("GROQ_API_KEY"),
+    model_name="llama3-8b-8192"
+)
+# --- END OF FIX ---
 
 # Initialize the search tool
 search_tool = SerperDevTool(api_key=os.environ.get("SERPER_API_KEY"))
@@ -16,6 +26,7 @@ researcher = Agent(
   goal=f'Uncover groundbreaking technologies and trends about {topic}',
   backstory="You're a renowned research analyst, known for your ability to find signal in the noise.",
   tools=[search_tool],
+  llm=llm, # <-- 3. ASSIGN the LLM to the agent
   allow_delegation=False
 )
 
@@ -24,6 +35,7 @@ writer = Agent(
   role='Senior Technology Writer',
   goal=f'Craft a compelling and informative blog post about {topic}',
   backstory="You're a famous technology writer, capable of simplifying complex topics for a broad audience.",
+  llm=llm, # <-- 3. ASSIGN the LLM to the agent
   allow_delegation=False
 )
 
@@ -52,3 +64,4 @@ result = crew.kickoff()
 
 # Print the final result as a JSON object to standard output
 print(json.dumps({"result": result}))
+
