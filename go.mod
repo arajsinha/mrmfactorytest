@@ -5,7 +5,6 @@ go 1.24.1
 // This section contains all of your application's direct dependencies.
 // It is the same as the version you provided.
 require (
-	github.com/Knetic/govaluate v3.0.0+incompatible
 	github.com/SAP/go-hdb v1.13.7
 	github.com/aws/aws-sdk-go v1.55.7
 	github.com/stretchr/testify v1.10.0
