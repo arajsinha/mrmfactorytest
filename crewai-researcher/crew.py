@@ -25,7 +25,7 @@ topic = sys.argv[1]
 os.environ["GROQ_API_KEY"] = os.environ.get("GROQ_API_KEY")
 os.environ["SERPER_API_KEY"] = os.environ.get("SERPER_API_KEY")
 
-llm = ChatGroq(model_name="llama-3.1-8b-instant")
+llm = ChatGroq(model_name="groq/llama-3.1-8b-instant")
 
 # Define the Researcher Agent
 researcher = Agent(
