@@ -8,20 +8,17 @@ from langchain_groq import ChatGroq
 # Get the research topic from the command-line argument
 topic = sys.argv[1]
 
-# --- THIS IS THE FIX ---
-# Set the environment variable directly in the script to ensure all
-# underlying libraries can access it.
+# Set the environment variables for the libraries to use
 os.environ["GROQ_API_KEY"] = os.environ.get("GROQ_API_KEY")
 os.environ["SERPER_API_KEY"] = os.environ.get("SERPER_API_KEY")
 
-# Initialize the Groq LLM with the specific provider prefix.
+# Initialize the Groq LLM
 llm = ChatGroq(
-    model_name="groq/llama3-8b-8192" # The format is provider/model_name
+    model_name="groq/llama3-8b-8192"
 )
-# --- END OF FIX ---
 
 # Initialize the search tool
-search_tool = SerperDevTool() # It will automatically use the environment variable
+search_tool = SerperDevTool()
 
 # Define the Researcher Agent
 researcher = Agent(
@@ -31,7 +28,7 @@ researcher = Agent(
   tools=[search_tool],
   llm=llm,
   allow_delegation=False,
-  verbose=True # Set to True for detailed logging
+  verbose=True
 )
 
 # Define the Writer Agent
@@ -41,7 +38,7 @@ writer = Agent(
   backstory="You're a famous technology writer.",
   llm=llm,
   allow_delegation=False,
-  verbose=True # Set to True for detailed logging
+  verbose=True
 )
 
 # Define the Tasks
@@ -57,13 +54,15 @@ write_task = Task(
   agent=writer
 )
 
-# Form the Crew with a sequential process
+# --- THIS IS THE FIX ---
+# The verbose attribute for the Crew object must be a boolean (True/False).
 crew = Crew(
   agents=[researcher, writer],
   tasks=[research_task, write_task],
   process=Process.sequential,
-  verbose=2
+  verbose=True # Use True for detailed logging, not 2
 )
+# --- END OF FIX ---
 
 # Execute the crew's work
 result = crew.kickoff()
