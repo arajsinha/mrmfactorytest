@@ -4,21 +4,27 @@ import os
 from crewai import Agent, Task, Crew, Process
 from crewai_tools import SerperDevTool
 from langchain_groq import ChatGroq
+from pydantic.v1 import BaseModel, Field #<-- 1. IMPORT Pydantic models
+
+# --- THIS IS THE FIX (Part 1) ---
+# 2. Define a simple, strict input schema for our search tool.
+#    This ensures the agent always provides a simple string.
+class SearchInput(BaseModel):
+    search_query: str = Field(description="Mandatory search query you want to use to search the internet")
+
+# 3. Create a wrapper for the SerperDevTool
+#    We are decorating the original tool to use our new, stricter input model.
+search_tool = SerperDevTool(args_schema=SearchInput)
+# --- END OF FIX ---
+
 
 # Get the research topic from the command-line argument
 topic = sys.argv[1]
 
-# Set the environment variables for the libraries to use
 os.environ["GROQ_API_KEY"] = os.environ.get("GROQ_API_KEY")
 os.environ["SERPER_API_KEY"] = os.environ.get("SERPER_API_KEY")
 
-# Initialize the Groq LLM
-llm = ChatGroq(
-    model_name="groq/llama-3.1-8b-instant"
-)
-
-# Initialize the search tool
-search_tool = SerperDevTool()
+llm = ChatGroq(model_name="llama-3.1-8b-instant")
 
 # Define the Researcher Agent
 researcher = Agent(
@@ -27,8 +33,9 @@ researcher = Agent(
   backstory="You're a renowned research analyst.",
   tools=[search_tool],
   llm=llm,
-  allow_delegation=False,
-  verbose=True
+  max_rpm=2,
+  verbose=True,
+  allow_delegation=False
 )
 
 # Define the Writer Agent
@@ -37,32 +44,32 @@ writer = Agent(
   goal=f'Craft a compelling and informative blog post about {topic}',
   backstory="You're a famous technology writer.",
   llm=llm,
-  allow_delegation=False,
-  verbose=True
+  max_rpm=2,
+  verbose=True,
+  allow_delegation=False
 )
 
 # Define the Tasks
 research_task = Task(
   description=f'Conduct a comprehensive analysis of the latest trends in {topic}. Identify key players, innovations, and market forecasts.',
   expected_output='A detailed report summarizing your findings.',
-  agent=researcher
+  agent=researcher,
+  max_retries=3
 )
 
 write_task = Task(
   description='Using the research report, write an engaging blog post. It should be easy to understand, well-structured, and highlight the most important findings.',
   expected_output=f'A 500-word blog post about {topic}, formatted in markdown.',
-  agent=writer
+  agent=writer,
+  max_retries=3
 )
 
-# --- THIS IS THE FIX ---
-# The verbose attribute for the Crew object must be a boolean (True/False).
 crew = Crew(
   agents=[researcher, writer],
   tasks=[research_task, write_task],
   process=Process.sequential,
-  verbose=True # Use True for detailed logging, not 2
+  verbose=True
 )
-# --- END OF FIX ---
 
 # Execute the crew's work
 result = crew.kickoff()
