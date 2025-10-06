@@ -1,0 +1,16 @@
+# This PeerAuthentication policy is a specific instruction for the Istio sidecar.
+apiVersion: security.istio.io/v1beta1
+kind: PeerAuthentication
+metadata:
+  name: mrm-cell-permissive-mtls
+  namespace: default
+spec:
+  # This rule applies ONLY to pods with the label 'app: mrm-cell'.
+  selector:
+    matchLabels:
+      app: mrm-cell
+  # This sets the security mode for the selected pods.
+  mtls:
+    # PERMISSIVE mode tells the sidecar: "Accept both encrypted (mTLS) traffic from
+    # inside the cluster AND unencrypted (plaintext) traffic from the gateway."
+    mode: PERMISSIVE

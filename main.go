@@ -10,7 +10,6 @@ import (
 	"os"
 	"time"
 
-	// We only need the handlers package for the simple API.
 	"mrm_cell/internal/handlers"
 
 	batchv1 "k8s.io/api/batch/v1"
@@ -59,7 +58,7 @@ func main() {
 	}
 }
 
-// This is now the only core method of the orchestrator.
+// OrchestrateAgentExecution is the only core method of the orchestrator.
 func (s *Server) OrchestrateAgentExecution(topic string) error {
 	s.logger.Info("Received new agent execution request", "topic", topic)
 	jobName := fmt.Sprintf("agent-exec-%d", time.Now().UnixNano())
@@ -72,9 +71,11 @@ func (s *Server) OrchestrateAgentExecution(topic string) error {
 				Spec: corev1.PodSpec{
 					Containers: []corev1.Container{
 						{
-							Name:  "crew-ai-agent",
-							Image: "your-docker-repo/crewai-researcher:latest", // The new CrewAI image
-							Args:  []string{topic},                               // The topic is passed as an argument
+							Name: "crew-ai-agent",
+							// --- THIS IS THE FINAL UPDATE ---
+							Image: "arajsinha/crewai-researcher:latest", // Use the correct final image name
+							// --- END OF UPDATE ---
+							Args:  []string{topic}, // The topic is passed as an argument
 							// Inject API keys for the AI agent (e.g., OpenAI, Serper)
 							EnvFrom: []corev1.EnvFromSource{
 								{SecretRef: &corev1.SecretEnvSource{LocalObjectReference: corev1.LocalObjectReference{Name: "ai-api-keys"}}},

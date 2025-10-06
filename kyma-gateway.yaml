@@ -34,4 +34,4 @@ spec:
         # This is the internal Kubernetes address of our application's service.
         host: mrm-cell-public.default.svc.cluster.local
         port:
-          number: 9081
+          number: 8080
