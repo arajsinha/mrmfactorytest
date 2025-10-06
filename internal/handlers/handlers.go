@@ -8,7 +8,7 @@ import (
 
 // AppServer is the interface for our simple orchestrator.
 type AppServer interface {
-	OrchestrateExecution(configMapName string) error
+	OrchestrateAgentExecution(topic string) error
 }
 
 // SetupHandlers registers the API endpoints.
@@ -18,14 +18,15 @@ func SetupHandlers(server AppServer) {
 		fmt.Fprintln(w, "OK")
 	})
 
-	http.HandleFunc("/execute", func(w http.ResponseWriter, r *http.Request) {
+	// The endpoint is now for submitting agent assignments.
+	http.HandleFunc("/assignments", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "Only POST method is allowed", http.StatusMethodNotAllowed)
 			return
 		}
 
 		var reqBody struct {
-			ConfigMapName string `json:"configMapName"`
+			Topic string `json:"topic"`
 		}
 
 		if err := json.NewDecoder(r.Body).Decode(&reqBody); err != nil {
@@ -33,14 +34,14 @@ func SetupHandlers(server AppServer) {
 			return
 		}
 
-		if reqBody.ConfigMapName == "" {
-			http.Error(w, "Missing 'configMapName' in request body", http.StatusBadRequest)
+		if reqBody.Topic == "" {
+			http.Error(w, "Missing 'topic' in request body", http.StatusBadRequest)
 			return
 		}
 		
-		go server.OrchestrateExecution(reqBody.ConfigMapName)
+		go server.OrchestrateAgentExecution(reqBody.Topic)
 
 		w.WriteHeader(http.StatusAccepted)
-		fmt.Fprintf(w, "Accepted execution request for config: %s\n", reqBody.ConfigMapName)
+		fmt.Fprintf(w, "Accepted new agent assignment for topic: %s\n", reqBody.Topic)
 	})
 }
