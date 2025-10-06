@@ -1,0 +1,38 @@
+# This Service gives our deployment a stable internal DNS name so that
+# AI agents (and your main orchestrator) can find it.
+apiVersion: v1
+kind: Service
+metadata:
+  name: mcp-server
+  # We will deploy this in the 'default' namespace with the main application.
+  namespace: default
+spec:
+  selector:
+    app: mcp-server
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 8080
+---
+# This Deployment runs our MCP Server application.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mcp-server-deployment
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mcp-server
+  template:
+    metadata:
+      labels:
+        app: mcp-server
+    spec:
+      containers:
+      - name: server
+        # Use the new image we defined in the GitHub Actions workflow
+        image: arajsinha/mrm-mcp-server:latest
+        ports:
+        - containerPort: 8080
