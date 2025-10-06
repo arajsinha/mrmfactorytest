@@ -4,7 +4,8 @@ import os
 from crewai import Agent, Task, Crew, Process
 from crewai_tools import SerperDevTool
 from langchain_groq import ChatGroq
-from pydantic.v1 import BaseModel, Field #<-- 1. IMPORT Pydantic models
+# Import from the modern pydantic library directly.
+from pydantic import BaseModel, Field
 
 # --- THIS IS THE FIX (Part 1) ---
 # 2. Define a simple, strict input schema for our search tool.
