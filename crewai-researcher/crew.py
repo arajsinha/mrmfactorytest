@@ -14,7 +14,7 @@ os.environ["SERPER_API_KEY"] = os.environ.get("SERPER_API_KEY")
 
 # Initialize the Groq LLM
 llm = ChatGroq(
-    model_name="groq/llama3-8b-8192"
+    model_name="groq/llama-3.1-8b-instant"
 )
 
 # Initialize the search tool
