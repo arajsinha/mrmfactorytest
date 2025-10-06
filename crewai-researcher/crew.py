@@ -7,15 +7,30 @@ from langchain_groq import ChatGroq
 # Import from the modern pydantic library directly.
 from pydantic import BaseModel, Field
 
-# --- THIS IS THE FIX (Part 1) ---
-# 2. Define a simple, strict input schema for our search tool.
-#    This ensures the agent always provides a simple string.
-class SearchInput(BaseModel):
-    search_query: str = Field(description="Mandatory search query you want to use to search the internet")
+# --- THIS IS THE DEFINITIVE FIX ---
+# Instead of wrapping the tool, we create our own custom tool
+# that is smart enough to handle the LLM's quirky output.
 
-# 3. Create a wrapper for the SerperDevTool
-#    We are decorating the original tool to use our new, stricter input model.
-search_tool = SerperDevTool(args_schema=SearchInput)
+from langchain.tools import tool
+
+class CustomSerperDevTool:
+    @tool("Search the internet with Serper")
+    def search(search_query: dict) -> str:
+        """
+        A tool that can be used to search the internet with a search_query.
+        It can handle complex dictionary inputs for the search query.
+        """
+        # The LLM is sending a dictionary like {'description': '...'},
+        # so we extract the actual query from the 'description' key.
+        query_to_use = search_query.get('description', '')
+        if not isinstance(query_to_use, str):
+             query_to_use = str(search_query) # Fallback if the structure is even weirder
+
+        # Use the standard SerperDevTool to perform the actual search
+        return SerperDevTool()._run(query=query_to_use)
+
+# Instantiate our new, robust tool
+search_tool = CustomSerperDevTool().search
 # --- END OF FIX ---
 
 
