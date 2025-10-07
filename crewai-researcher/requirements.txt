@@ -4,3 +4,4 @@ cohere
 litellm
 pydantic
 langchain_cohere
+requests
