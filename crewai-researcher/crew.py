@@ -6,6 +6,7 @@ from crewai_tools import SerperDevTool
 from langchain_cohere import ChatCohere
 from typing import Type, Any
 import requests
+from pydantic import BaseModel, Field
 
 # --- The Custom Tool for State Management ---
 # This tool is the agent's interface to our MCP Server and etcd backend.
