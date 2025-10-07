@@ -1,6 +1,6 @@
-crewai
-crewai_tools
-langchain_openai
-langchain_groq
-langchain
+crewai>=0.65.0
+crewai-tools>=0.8.0
+cohere
+litellm
 pydantic
+langchain_cohere
