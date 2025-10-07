@@ -75,7 +75,17 @@ func (s *Server) OrchestrateAgentExecution(topic string) error {
 							// --- THIS IS THE FINAL UPDATE ---
 							Image: "arajsinha/crewai-researcher:latest", // Use the correct final image name
 							// --- END OF UPDATE ---
-							Args:  []string{topic}, // The topic is passed as an argument
+							// --- THIS IS THE FINAL FIX ---
+							// We wrap the original command in a shell script.
+							// The '&&' ensures that after the Python script finishes successfully,
+							// we send a shutdown command to the Istio sidecar.
+							Command: []string{
+								"sh",
+								"-c",
+								fmt.Sprintf("python crew.py '%s' && curl -X POST http://localhost:15020/quitquitquit", topic),
+							},
+							// --- END OF FIX ---
+
 							// Inject API keys for the AI agent (e.g., OpenAI, Serper)
 							EnvFrom: []corev1.EnvFromSource{
 								{SecretRef: &corev1.SecretEnvSource{LocalObjectReference: corev1.LocalObjectReference{Name: "ai-api-keys"}}},
