@@ -1,0 +1,23 @@
+services:
+  # This service is a simple, single-node 'etcd' database for local development.
+  etcd:
+    # --- THIS IS THE FIX ---
+    # The image name is corrected to the official Quay.io registry.
+    image: quay.io/coreos/etcd:latest
+    # --- END OF FIX ---
+    environment:
+      - ALLOW_NONE_AUTHENTICATION=yes
+      - ETCD_ADVERTISE_CLIENT_URLS=http://etcd:2379
+      - ETCD_LISTEN_CLIENT_URLS=http://0.0.0.0:2379
+    ports:
+      - "2379:2379"
+
+  # This service is your new MCP Server.
+  mcp-server:
+    build: ./mcp-server
+    ports:
+      - "8080:8080"
+    environment:
+      - ETCD_ENDPOINT=http://etcd:2379
+    depends_on:
+      - etcd
