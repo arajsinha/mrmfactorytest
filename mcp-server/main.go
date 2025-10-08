@@ -34,14 +34,14 @@ func (s *MCPState) tasksHandler(w http.ResponseWriter, r *http.Request) {
 	// e.g., POST /tasks/ -> createTaskHandler
 	// e.g., GET /tasks/task-123 -> getTaskHandler
 	// e.g., POST /tasks/task-123 -> updateTaskHandler
-	
+
 	path := strings.TrimPrefix(r.URL.Path, "/tasks/")
-	
+
 	if r.Method == http.MethodPost && path == "" {
 		s.createTaskHandler(w, r)
 		return
 	}
-	
+
 	if path != "" {
 		switch r.Method {
 		case http.MethodGet:
@@ -64,11 +64,11 @@ func (s *MCPState) createTaskHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
-	
+
 	task.ID = fmt.Sprintf("task-%d", time.Now().UnixNano())
 	task.Status = "pending"
 	task.UpdatedAt = time.Now()
-	
+
 	taskJSON, _ := json.Marshal(task)
 	etcdKey := fmt.Sprintf("mrm/agent_tasks/%s", task.ID)
 
@@ -78,13 +78,12 @@ func (s *MCPState) createTaskHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
-	
+
 	s.logger.Info("Successfully created new task in etcd", "task_id", task.ID)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(task)
 }
-
 
 // updateTaskHandler allows an agent to save its work to etcd.
 func (s *MCPState) updateTaskHandler(w http.ResponseWriter, r *http.Request, taskID string) {
@@ -93,11 +92,11 @@ func (s *MCPState) updateTaskHandler(w http.ResponseWriter, r *http.Request, tas
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
-	
+
 	task.ID = taskID // Ensure the ID from the URL is used
 	task.UpdatedAt = time.Now()
 	taskJSON, _ := json.Marshal(task)
-	
+
 	etcdKey := fmt.Sprintf("mrm/agent_tasks/%s", taskID)
 	_, err := s.etcdClient.Put(context.Background(), etcdKey, string(taskJSON))
 	if err != nil {
@@ -105,7 +104,7 @@ func (s *MCPState) updateTaskHandler(w http.ResponseWriter, r *http.Request, tas
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
-	
+
 	s.logger.Info("Successfully updated task state in etcd", "task_id", taskID, "status", task.Status)
 	w.WriteHeader(http.StatusOK)
 }
@@ -129,6 +128,17 @@ func (s *MCPState) getTaskHandler(w http.ResponseWriter, r *http.Request, taskID
 
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+
+	// --- THIS IS THE FIX ---
+	// Read the etcd endpoint from an environment variable.
+	// This allows us to use 'http://etcd:2379' locally and the Kubernetes
+	// service address in the Kyma cluster.
+	etcdEndpoint := os.Getenv("ETCD_ENDPOINT")
+	if etcdEndpoint == "" {
+		// Default to the Kubernetes service name if the variable isn't set.
+		etcdEndpoint = "http://mrm-cell-internal.default.svc.cluster.local:2379"
+	}
+	// --- END OF FIX ---
 
 	// Connect to the etcd cluster using its internal Kubernetes DNS name.
 	// This assumes your main mrm-cell app is running.

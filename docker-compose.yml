@@ -1,32 +1,23 @@
-version: '3'
-
 services:
-  node1:
-    build: .
-    # image: ghcr.io/mahesh0431/mrm2:v0.01
+  # This service is a simple, single-node 'etcd' database for local development.
+  etcd:
+    # --- THIS IS THE FIX ---
+    # The image name is corrected to the official Quay.io registry.
+    image: quay.io/coreos/etcd:latest
+    # --- END OF FIX ---
+    environment:
+      - ALLOW_NONE_AUTHENTICATION=yes
+      - ETCD_ADVERTISE_CLIENT_URLS=http://etcd:2379
+      - ETCD_LISTEN_CLIENT_URLS=http://0.0.0.0:2379
     ports:
       - "2379:2379"
-      - "2380:2380"
+
+  # This service is your new MCP Server.
+  mcp-server:
+    build: ./mcp-server
+    ports:
       - "8080:8080"
-    command: >
-      --node-id=node1  --data-dir=/var/lib/etcd  --client-port=2379 --host-id=node1  --peer-port=2380  --initial-cluster=node1=http://node1:2380,node2=http://node2:2380,node3=http://node3:2380 --cluster-state=new
-
-  node2:
-    build: .
-    # image: ghcr.io/mahesh0431/mrm2:v0.01
-    ports:
-      - "2479:2379"
-      - "2480:2380"
-      - "8081:8080"
-    command: >
-      --node-id=node2 --data-dir=/var/lib/etcd --client-port=2379 --host-id=node2 --peer-port=2380 --initial-cluster=node1=http://node1:2380,node2=http://node2:2380,node3=http://node3:2380 --cluster-state=new
-
-  node3:
-    build: .
-    # image: ghcr.io/mahesh0431/mrm2:v0.01
-    ports:
-      - "2579:2379"
-      - "2580:2380"
-      - "8082:8080"
-    command: >
-      --node-id=node3  --data-dir=/var/lib/etcd --client-port=2379 --host-id=node3 --peer-port=2380 --initial-cluster=node1=http://node1:2380,node2=http://node2:2380,node3=http://node3:2380 --cluster-state=new
+    environment:
+      - ETCD_ENDPOINT=http://etcd:2379
+    depends_on:
+      - etcd
