@@ -17,8 +17,8 @@ import (
 type AgentTask struct {
 	ID        string    `json:"id"`
 	Status    string    `json:"status"` // e.g., "pending", "in-progress", "completed"
-	Input     string    `json:"input"`
-	Output    string    `json:"output,omitempty"`
+	Input     string    `json:"input,omitempty"`
+	Output    any       `json:"output,omitempty"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
@@ -28,20 +28,17 @@ type MCPState struct {
 	logger     *slog.Logger
 }
 
-// tasksHandler routes requests for the /tasks/ endpoint.
+// tasksHandler routes requests for the /tasks/ endpoint based on the HTTP method.
 func (s *MCPState) tasksHandler(w http.ResponseWriter, r *http.Request) {
-	// This simple router uses the HTTP method to decide what to do.
-	// e.g., POST /tasks/ -> createTaskHandler
-	// e.g., GET /tasks/task-123 -> getTaskHandler
-	// e.g., POST /tasks/task-123 -> updateTaskHandler
-
 	path := strings.TrimPrefix(r.URL.Path, "/tasks/")
-
+	
+	// Route for creating a new task (e.g., POST /tasks/)
 	if r.Method == http.MethodPost && path == "" {
 		s.createTaskHandler(w, r)
 		return
 	}
-
+	
+	// Routes for a specific task ID (e.g., GET /tasks/task-123)
 	if path != "" {
 		switch r.Method {
 		case http.MethodGet:
@@ -64,11 +61,11 @@ func (s *MCPState) createTaskHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
-
+	
 	task.ID = fmt.Sprintf("task-%d", time.Now().UnixNano())
 	task.Status = "pending"
 	task.UpdatedAt = time.Now()
-
+	
 	taskJSON, _ := json.Marshal(task)
 	etcdKey := fmt.Sprintf("mrm/agent_tasks/%s", task.ID)
 
@@ -78,8 +75,8 @@ func (s *MCPState) createTaskHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
-
-	s.logger.Info("Successfully created new task in etcd", "task_id", task.ID)
+	
+	s.logger.Info("✅ Successfully created new task in etcd", "task_id", task.ID)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(task)
@@ -92,11 +89,11 @@ func (s *MCPState) updateTaskHandler(w http.ResponseWriter, r *http.Request, tas
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
-
+	
 	task.ID = taskID // Ensure the ID from the URL is used
 	task.UpdatedAt = time.Now()
 	taskJSON, _ := json.Marshal(task)
-
+	
 	etcdKey := fmt.Sprintf("mrm/agent_tasks/%s", taskID)
 	_, err := s.etcdClient.Put(context.Background(), etcdKey, string(taskJSON))
 	if err != nil {
@@ -104,8 +101,8 @@ func (s *MCPState) updateTaskHandler(w http.ResponseWriter, r *http.Request, tas
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
-
-	s.logger.Info("Successfully updated task state in etcd", "task_id", taskID, "status", task.Status)
+	
+	s.logger.Info("✅ Successfully updated task state in etcd", "task_id", taskID, "status", task.Status)
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -122,6 +119,7 @@ func (s *MCPState) getTaskHandler(w http.ResponseWriter, r *http.Request, taskID
 	var task AgentTask
 	json.Unmarshal(resp.Kvs[0].Value, &task)
 
+	s.logger.Info("✅ Successfully retrieved task state from etcd", "task_id", taskID)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(task)
 }
@@ -129,33 +127,25 @@ func (s *MCPState) getTaskHandler(w http.ResponseWriter, r *http.Request, taskID
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 
-	// --- THIS IS THE FIX ---
-	// Read the etcd endpoint from an environment variable.
-	// This allows us to use 'http://etcd:2379' locally and the Kubernetes
-	// service address in the Kyma cluster.
+	// Read the etcd endpoint from an environment variable for portability.
 	etcdEndpoint := os.Getenv("ETCD_ENDPOINT")
 	if etcdEndpoint == "" {
 		// Default to the Kubernetes service name if the variable isn't set.
 		etcdEndpoint = "http://mrm-cell-internal.default.svc.cluster.local:2379"
 	}
-	// --- END OF FIX ---
-
-	// Connect to the etcd cluster using its internal Kubernetes DNS name.
-	// This assumes your main mrm-cell app is running.
+	
 	etcdClient, err := clientv3.New(clientv3.Config{
-		Endpoints:   []string{"http://mrm-cell-internal.default.svc.cluster.local:2379"},
+		Endpoints:   []string{etcdEndpoint},
 		DialTimeout: 5 * time.Second,
 	})
 	if err != nil {
-		logger.Error("Failed to connect to etcd", "error", err)
+		logger.Error("Failed to connect to etcd", "endpoint", etcdEndpoint, "error", err)
 		os.Exit(1)
 	}
 	defer etcdClient.Close()
-	logger.Info("Successfully connected to etcd cluster.")
+	logger.Info("Successfully connected to etcd cluster.", "endpoint", etcdEndpoint)
 
 	state := &MCPState{etcdClient: etcdClient, logger: logger}
-
-	// Register the new, stateful MCP endpoints.
 	http.HandleFunc("/tasks/", state.tasksHandler)
 
 	port := "8080"
